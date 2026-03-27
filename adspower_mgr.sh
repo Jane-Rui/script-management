@@ -256,10 +256,6 @@ check_kernel_installed() {
   fi
 }
 
-get_vtok_status() {
-  echo -e "${YELLOW}已移除（请使用 OpenClaw 上游菜单）${NC}"
-}
-
 ensure_default_patch_list() {
   if [[ -f "$PATCH_LIST" ]]; then
     return
@@ -286,16 +282,6 @@ ensure_patch_list_healthy() {
     warn "补丁列表格式异常，已恢复默认列表。"
     write_default_patch_list
   fi
-}
-
-json_escape() {
-  local str="$1"
-  echo "$str" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\n/\\n/g'
-}
-
-build_vtok_config() {
-  error "build_vtok_config 已移除，不再写入预置 VTok 平台配置。"
-  return 1
 }
 
 prompt_api_key_if_needed() {
@@ -328,6 +314,7 @@ wait_api_ready() {
 start_adspower() {
   load_config
   prompt_api_key_if_needed || return 1
+  ensure_adspower_runtime_ready || return 1
 
   if ! is_valid_port "$API_PORT"; then
     error "API 端口非法: $API_PORT"
@@ -666,38 +653,6 @@ patch_menu() {
   esac
 }
 
-vtok_setup() {
-  warn "VTok 预置平台配置已移除。"
-  info "请使用 OpenClaw 上游菜单进行模型/API 配置。"
-  openclaw_menu
-}
-
-vtok_show() {
-  warn "VTok 预置平台展示已移除。"
-  info "请在 OpenClaw 上游菜单中查看最新模型配置。"
-  openclaw_menu
-}
-
-vtok_menu() {
-  clear
-  echo -e "${GREEN}========================================${NC}"
-  echo -e "      VTok 配置入口（已迁移） v5.0"
-  echo -e "${GREEN}========================================${NC}"
-  printf "当前状态 : %b\n" "$(get_vtok_status)"
-  echo -e "${GREEN}----------------------------------------${NC}"
-  echo "1. 进入 OpenClaw 上游配置菜单"
-  echo "0. 返回主菜单"
-  echo "----------------------------------------"
-
-  local v_choice
-  read -r -p "请输入选项: " v_choice
-  case "$v_choice" in
-    1) openclaw_menu ;;
-    0) return ;;
-    *) warn "无效选项: $v_choice" ;;
-  esac
-}
-
 run_kejilion_openclaw() {
   local mode="${1:-app-openclaw}"
   require_cmd bash || return 1
@@ -783,19 +738,129 @@ is_rhel_like() {
   [[ -f /etc/redhat-release ]] && (command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1)
 }
 
-install_runtime_deps() {
+DEBIAN_ADSPOWER_DEPS=(
+  xvfb
+  xz-utils
+  ca-certificates
+  fonts-liberation
+  libasound2
+  libatk-bridge2.0-0
+  libatk1.0-0
+  libatspi2.0-0
+  libcups2
+  libdbus-1-3
+  libdrm2
+  libgbm1
+  libgtk-3-0
+  libnspr4
+  libnss3
+  libxcomposite1
+  libxdamage1
+  libxfixes3
+  libxkbcommon0
+  libxrandr2
+  curl
+  wget
+)
+
+RHEL_ADSPOWER_DEPS=(
+  xorg-x11-server-Xvfb
+  xz
+  ca-certificates
+  liberation-fonts-common
+  alsa-lib
+  atk
+  at-spi2-atk
+  at-spi2-core
+  cups-libs
+  dbus-libs
+  libdrm
+  mesa-libgbm
+  gtk3
+  nspr
+  nss
+  nss-util
+  libXcomposite
+  libXdamage
+  libXfixes
+  libxkbcommon
+  libXrandr
+  curl
+  wget
+)
+
+print_debian_dep_install_cmd() {
+  local joined
+  joined="$(printf '%s ' "${DEBIAN_ADSPOWER_DEPS[@]}")"
+  echo "sudo apt-get update && sudo apt-get install -y --no-install-recommends ${joined}"
+}
+
+check_missing_debian_deps() {
+  local missing=()
+  local p
+  for p in "${DEBIAN_ADSPOWER_DEPS[@]}"; do
+    dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p")
+  done
+  printf '%s\n' "${missing[@]}"
+}
+
+check_missing_rhel_deps() {
+  local missing=()
+  local p
+  for p in "${RHEL_ADSPOWER_DEPS[@]}"; do
+    rpm -q "$p" >/dev/null 2>&1 || missing+=("$p")
+  done
+  printf '%s\n' "${missing[@]}"
+}
+
+ensure_adspower_runtime_ready() {
   if is_debian_like; then
-    info "检测到 Debian/Ubuntu，安装依赖..."
-    apt-get update
-    apt-get install -y --no-install-recommends wget xvfb curl iproute2 procps grep sed gawk
+    local missing=()
+    mapfile -t missing < <(check_missing_debian_deps)
+    if (( ${#missing[@]} > 0 )); then
+      error "检测到 AdsPower 运行依赖缺失 (${#missing[@]} 个): ${missing[*]}"
+      warn "请先安装依赖后再启动 AdsPower。"
+      echo "推荐命令:"
+      print_debian_dep_install_cmd
+      return 1
+    fi
     return 0
   fi
 
   if is_rhel_like; then
-    info "检测到 RHEL 系，安装依赖..."
+    local missing=()
+    mapfile -t missing < <(check_missing_rhel_deps)
+    if (( ${#missing[@]} > 0 )); then
+      error "检测到 RHEL 运行依赖缺失 (${#missing[@]} 个): ${missing[*]}"
+      warn "请先安装依赖后再启动 AdsPower。"
+      local joined
+      joined="$(printf '%s ' "${RHEL_ADSPOWER_DEPS[@]}")"
+      echo "推荐命令:"
+      echo "sudo dnf install -y ${joined}"
+      return 1
+    fi
+    return 0
+  fi
+
+  warn "未知发行版，无法自动校验全部运行依赖。"
+  return 0
+}
+
+install_runtime_deps() {
+  if is_debian_like; then
+    info "检测到 Debian/Ubuntu，安装 AdsPower 运行依赖..."
+    apt-get update
+    apt-get install -y --no-install-recommends "${DEBIAN_ADSPOWER_DEPS[@]}"
+    apt-get install -y --no-install-recommends iproute2 procps grep sed gawk
+    return 0
+  fi
+
+  if is_rhel_like; then
+    info "检测到 RHEL 系，安装 AdsPower 运行依赖..."
     local pkg_mgr="dnf"
     command -v dnf >/dev/null 2>&1 || pkg_mgr="yum"
-    "$pkg_mgr" install -y wget xorg-x11-server-Xvfb curl iproute procps-ng grep sed gawk
+    "$pkg_mgr" install -y "${RHEL_ADSPOWER_DEPS[@]}"
+    "$pkg_mgr" install -y iproute procps-ng grep sed gawk
     return 0
   fi
 
@@ -921,7 +986,6 @@ main_menu() {
     printf "当前端口 : ${YELLOW}%s${NC}\n" "$API_PORT"
     printf "系统资源 : %b\n" "$(get_resource_usage)"
     printf "当前 Key : %b\n" "$(get_masked_key)"
-    printf "VTok 状态 : %b\n" "$(get_vtok_status)"
 
     echo -e "${GREEN}----------------------------------------${NC}"
     echo -e "1. ${CYAN}环境安装/修复${NC}"
@@ -933,8 +997,7 @@ main_menu() {
     echo "7. 更换 API Key"
     echo "8. 补丁管理菜单"
     echo "9. 内核管理菜单"
-    echo -e "10. ${CYAN}VTok 配置入口（已迁移）${NC}"
-    echo -e "11. ${CYAN}OpenClaw（上游同步）${NC}"
+    echo -e "10. ${CYAN}OpenClaw（上游同步）${NC}"
     echo "0. 退出脚本"
     echo "----------------------------------------"
 
@@ -950,8 +1013,7 @@ main_menu() {
       7) change_api_key ;;
       8) patch_menu ;;
       9) kernel_menu ;;
-      10) vtok_menu ;;
-      11) openclaw_menu ;;
+      10) openclaw_menu ;;
       0) exit 0 ;;
       *) warn "无效选项: $choice" ;;
     esac
