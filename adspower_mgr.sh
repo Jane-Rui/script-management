@@ -257,19 +257,7 @@ check_kernel_installed() {
 }
 
 get_vtok_status() {
-  local cfg="$HOME/.openclaw/openclaw.json"
-  if [[ ! -f "$cfg" ]]; then
-    echo -e "${RED}未安装${NC}"
-    return
-  fi
-
-  if grep -q '"vtok-claude"' "$cfg" 2>/dev/null; then
-    local key
-    key="$(grep -A 2 '"vtok-claude"' "$cfg" | grep 'apiKey' | sed 's/.*"\([^"]*\)".*/\1/' | head -c 8)"
-    echo -e "${GREEN}已配置 (${key}****)${NC}"
-  else
-    echo -e "${RED}未配置${NC}"
-  fi
+  echo -e "${YELLOW}已移除（请使用 OpenClaw 上游菜单）${NC}"
 }
 
 ensure_default_patch_list() {
@@ -306,110 +294,8 @@ json_escape() {
 }
 
 build_vtok_config() {
-  local token="$1"
-  local cfg_file="$2"
-
-  [[ -f "$cfg_file" ]] && cp "$cfg_file" "${cfg_file}.bak.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
-
-  cat > "$cfg_file" <<'EOFCONFIG'
-{
-  "meta": {
-    "lastTouchedVersion": "2026.3.24",
-    "lastTouchedAt": "TIMESTAMP"
-  },
-  "models": {
-    "mode": "merge",
-    "providers": {
-      "vtok-claude": {
-        "baseUrl": "https://vtok.ai",
-        "apiKey": "VTOK_TOKEN_PLACEHOLDER",
-        "auth": "token",
-        "api": "anthropic-messages",
-        "authHeader": true,
-        "models": [
-          {
-            "id": "claude-opus-4-6",
-            "name": "claude-opus-4-6",
-            "api": "anthropic-messages",
-            "reasoning": false,
-            "input": ["text"],
-            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-            "contextWindow": 200000,
-            "maxTokens": 8192
-          },
-          {
-            "id": "claude-haiku-4-5",
-            "name": "claude-haiku",
-            "api": "anthropic-messages",
-            "reasoning": false,
-            "input": ["text"],
-            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-            "contextWindow": 200000,
-            "maxTokens": 8192
-          },
-          {
-            "id": "claude-sonnet-4-6",
-            "name": "claude-sonnet",
-            "api": "anthropic-messages",
-            "reasoning": false,
-            "input": ["text"],
-            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-            "contextWindow": 200000,
-            "maxTokens": 8192
-          }
-        ]
-      },
-      "vtok-openai": {
-        "baseUrl": "https://vtok.ai/v1",
-        "apiKey": "VTOK_TOKEN_PLACEHOLDER",
-        "auth": "token",
-        "api": "openai-responses",
-        "authHeader": true,
-        "models": [
-          {"id": "gpt-5.4", "name": "gpt-5.4", "api": "openai-responses", "reasoning": false, "input": ["text"], "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": 128000, "maxTokens": 16384},
-          {"id": "gpt-5.3", "name": "gpt-5.3", "api": "openai-responses", "reasoning": false, "input": ["text"], "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": 128000, "maxTokens": 16384},
-          {"id": "gpt-5.2", "name": "gpt-5.2", "api": "openai-responses", "reasoning": false, "input": ["text"], "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": 128000, "maxTokens": 16384}
-        ]
-      },
-      "vtok-gemini": {
-        "baseUrl": "https://vtok.ai/v1beta",
-        "apiKey": "VTOK_TOKEN_PLACEHOLDER",
-        "auth": "token",
-        "api": "google-generative-ai",
-        "authHeader": true,
-        "models": [
-          {"id": "gemini-3.1-pro-preview", "name": "Gemini 3.1 Pro Preview", "api": "google-generative-ai", "reasoning": false, "input": ["text"], "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": 1000000, "maxTokens": 8192},
-          {"id": "gemini-3-pro-preview", "name": "Gemini 3 Pro Preview", "api": "google-generative-ai", "reasoning": false, "input": ["text"], "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": 1000000, "maxTokens": 8192},
-          {"id": "gemini-3-flash-preview", "name": "Gemini 3 Flash Preview", "api": "google-generative-ai", "reasoning": false, "input": ["text"], "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": 1000000, "maxTokens": 8192}
-        ]
-      }
-    }
-  },
-  "agents": {
-    "defaults": {
-      "maxConcurrent": 4,
-      "model": {
-        "primary": "vtok-claude/claude-sonnet-4-6",
-        "fallbacks": ["vtok-claude/claude-opus-4-6", "vtok-openai/gpt-5.4", "vtok-gemini/gemini-3.1-pro-preview"]
-      },
-      "models": {
-        "vtok-claude/claude-opus-4-6": {"alias": "opus"},
-        "vtok-claude/claude-sonnet-4-6": {"alias": "sonnet"},
-        "vtok-claude/claude-haiku-4-5": {"alias": "haiku"},
-        "vtok-openai/gpt-5.3": {"alias": "gpt53"},
-        "vtok-openai/gpt-5.2": {"alias": "gpt52"},
-        "vtok-openai/gpt-5.4": {"alias": "gpt54"},
-        "vtok-gemini/gemini-3.1-pro-preview": {"alias": "gemini31"},
-        "vtok-gemini/gemini-3-pro-preview": {"alias": "gemini3"},
-        "vtok-gemini/gemini-3-flash-preview": {"alias": "flash"}
-      }
-    }
-  }
-}
-EOFCONFIG
-
-  sed -i "s/VTOK_TOKEN_PLACEHOLDER/$(json_escape "$token")/g" "$cfg_file"
-  sed -i "s/TIMESTAMP/$(date -u +%Y-%m-%dT%H:%M:%S.000Z)/g" "$cfg_file"
+  error "build_vtok_config 已移除，不再写入预置 VTok 平台配置。"
+  return 1
 }
 
 prompt_api_key_if_needed() {
@@ -781,83 +667,32 @@ patch_menu() {
 }
 
 vtok_setup() {
-  local cfg="$HOME/.openclaw/openclaw.json"
-  if [[ ! -f "$cfg" ]]; then
-    error "未找到 OpenClaw 配置文件: $cfg"
-    return 1
-  fi
-
-  echo -e "${YELLOW}请输入您的 VTok Token:${NC}"
-  local vtok_token
-  read -r vtok_token
-  vtok_token="$(trim "$vtok_token")"
-  [[ -n "$vtok_token" ]] || {
-    error "Token 不能为空"
-    return 1
-  }
-
-  info "正在写入 VTok 配置..."
-  build_vtok_config "$vtok_token" "$cfg"
-
-  success "VTok 配置成功。"
-  echo -e "${YELLOW}默认模型: vtok-claude/claude-sonnet-4-6${NC}"
-
-  if command -v openclaw >/dev/null 2>&1; then
-    if openclaw gateway restart; then
-      success "OpenClaw Gateway 已重启"
-    else
-      warn "Gateway 自动重启失败，请手动执行: openclaw gateway restart"
-    fi
-  else
-    warn "未检测到 openclaw 命令，请手动重启 Gateway。"
-  fi
+  warn "VTok 预置平台配置已移除。"
+  info "请使用 OpenClaw 上游菜单进行模型/API 配置。"
+  openclaw_menu
 }
 
 vtok_show() {
-  local cfg="$HOME/.openclaw/openclaw.json"
-  if [[ ! -f "$cfg" ]]; then
-    error "无法读取配置: $cfg"
-    return
-  fi
-
-  echo ""
-  echo -e "${CYAN}当前已配置的 VTok 模型:${NC}"
-
-  if grep -q '"vtok-claude"' "$cfg"; then
-    echo -e "  ${GREEN}vtok-claude:${NC}"
-    grep -A 50 '"vtok-claude"' "$cfg" | grep '"id"' | sed 's/.*"\([^"]*\)".*/    - \1/'
-  fi
-  if grep -q '"vtok-openai"' "$cfg"; then
-    echo -e "  ${GREEN}vtok-openai:${NC}"
-    grep -A 50 '"vtok-openai"' "$cfg" | grep '"id"' | sed 's/.*"\([^"]*\)".*/    - \1/'
-  fi
-  if grep -q '"vtok-gemini"' "$cfg"; then
-    echo -e "  ${GREEN}vtok-gemini:${NC}"
-    grep -A 50 '"vtok-gemini"' "$cfg" | grep '"id"' | sed 's/.*"\([^"]*\)".*/    - \1/'
-  fi
-
-  echo ""
-  echo -e "${CYAN}默认模型:${NC}"
-  grep '"primary"' "$cfg" | sed 's/.*"\([^"]*\)".*/  \1/' | head -1
+  warn "VTok 预置平台展示已移除。"
+  info "请在 OpenClaw 上游菜单中查看最新模型配置。"
+  openclaw_menu
 }
 
 vtok_menu() {
   clear
   echo -e "${GREEN}========================================${NC}"
-  echo -e "      VTok 模型配置 v5.0"
+  echo -e "      VTok 配置入口（已迁移） v5.0"
   echo -e "${GREEN}========================================${NC}"
   printf "当前状态 : %b\n" "$(get_vtok_status)"
   echo -e "${GREEN}----------------------------------------${NC}"
-  echo "1. 配置 VTok Token（Claude + GPT + Gemini）"
-  echo "2. 查看当前已配置的模型"
+  echo "1. 进入 OpenClaw 上游配置菜单"
   echo "0. 返回主菜单"
   echo "----------------------------------------"
 
   local v_choice
   read -r -p "请输入选项: " v_choice
   case "$v_choice" in
-    1) vtok_setup ;;
-    2) vtok_show ;;
+    1) openclaw_menu ;;
     0) return ;;
     *) warn "无效选项: $v_choice" ;;
   esac
@@ -1098,7 +933,7 @@ main_menu() {
     echo "7. 更换 API Key"
     echo "8. 补丁管理菜单"
     echo "9. 内核管理菜单"
-    echo -e "10. ${CYAN}VTok 模型配置${NC}"
+    echo -e "10. ${CYAN}VTok 配置入口（已迁移）${NC}"
     echo -e "11. ${CYAN}OpenClaw（上游同步）${NC}"
     echo "0. 退出脚本"
     echo "----------------------------------------"
