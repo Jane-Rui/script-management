@@ -1216,16 +1216,22 @@ ensure_opencode_link() {
 }
 
 install_opencode_cli() {
+  local force_reinstall="${1:-0}"
   require_cmd bash || return 1
   require_cmd curl || return 1
 
-  if is_opencode_installed; then
+  if is_opencode_installed && [[ "$force_reinstall" != "1" ]]; then
     success "已检测到 OpenCode CLI。"
     ensure_opencode_link || true
     return 0
   fi
 
-  info "开始安装 OpenCode CLI..."
+  if is_opencode_installed && [[ "$force_reinstall" == "1" ]]; then
+    warn "检测到 OpenCode 已安装，开始重复安装 OpenCode CLI..."
+  else
+    info "开始安装 OpenCode CLI..."
+  fi
+
   if ! bash -c "curl -fsSL \"$OPENCODE_INSTALL_URL\" | bash"; then
     error "OpenCode CLI 安装失败。"
     return 1
@@ -1265,6 +1271,7 @@ EOF
 }
 
 configure_opencode_default_permissions() {
+  local reuse_existing="${1:-0}"
   mkdir -p "$OPENCODE_CONFIG_DIR"
 
   local tmp_cfg
@@ -1306,6 +1313,13 @@ configure_opencode_default_permissions() {
     rm -f "$merged_cfg" 2>/dev/null || true
   fi
 
+  if [[ -f "$OPENCODE_CONFIG_FILE" && "$reuse_existing" == "1" ]]; then
+    warn "检测到现有配置无法安全合并，按复用策略保留原配置不覆盖。"
+    rm -f "$tmp_cfg" 2>/dev/null || true
+    success "已复用现有 OpenCode 配置。"
+    return 0
+  fi
+
   mv -f "$tmp_cfg" "$OPENCODE_CONFIG_FILE"
   chmod 600 "$OPENCODE_CONFIG_FILE" 2>/dev/null || true
   success "OpenCode 授权模式已写入: $OPENCODE_CONFIG_FILE"
@@ -1345,6 +1359,11 @@ opencode_menu() {
     echo -e "${GREEN}========================================${NC}"
     echo -e "      OpenCode 安装与授权"
     echo -e "${GREEN}========================================${NC}"
+    if is_opencode_installed; then
+      echo -e "当前状态 : ${GREEN}已安装${NC}"
+    else
+      echo -e "当前状态 : ${RED}未安装${NC}"
+    fi
     echo "说明: 默认策略为非删除操作自动放行；删除类命令（rm/rmdir/unlink 等）保留确认。"
     echo "----------------------------------------"
     echo "1. 安装 OpenCode 并应用默认授权策略"
@@ -1360,11 +1379,39 @@ opencode_menu() {
     case "$ocd_choice" in
       "") return ;;
       1)
-        install_opencode_cli && configure_opencode_default_permissions
+        local reuse_existing_cfg="0"
+        local reinstall_requested="0"
+
+        if is_opencode_installed; then
+          success "OpenCode 当前已安装。"
+          if confirm_action "是否执行重复安装 OpenCode CLI？"; then
+            reinstall_requested="1"
+          else
+            info "已跳过重复安装。"
+          fi
+
+          if confirm_action "检测到已有 OpenCode 配置，是否复用现有配置（不重置）？"; then
+            reuse_existing_cfg="1"
+          fi
+        fi
+
+        if [[ "$reinstall_requested" == "1" ]]; then
+          install_opencode_cli "1" || {
+            pause_any_key
+            continue
+          }
+        else
+          install_opencode_cli || {
+            pause_any_key
+            continue
+          }
+        fi
+
+        configure_opencode_default_permissions "$reuse_existing_cfg"
         pause_any_key
         ;;
       2)
-        configure_opencode_default_permissions
+        configure_opencode_default_permissions "0"
         pause_any_key
         ;;
       3)
