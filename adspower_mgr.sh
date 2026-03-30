@@ -26,7 +26,7 @@ ADSPOWER_DEB_BASE="${ADSPOWER_DEB_BASE:-https://version.adspower.net/software/li
 ADSPOWER_DEB_PATH="${ADSPOWER_DEB_PATH:-}"
 ADSPOWER_BIN_LINK_DIR="${ADSPOWER_BIN_LINK_DIR:-/usr/local/bin}"
 ADSPOWER_BIN_LINK_NAME="${ADSPOWER_BIN_LINK_NAME:-adspower_global}"
-ADSPOWER_MAIN_MIN_JS_URL="${ADSPOWER_MAIN_MIN_JS_URL:-https://version.adspower.net/software/lib_production/v2.8.4.4_main.min.js11bff97aadb92fc16a9abd79e1939518}"
+ADSPOWER_MAIN_MIN_JS_URL="${ADSPOWER_MAIN_MIN_JS_URL:-https://version.adspower.net/software/lib_production/v2.8.4.5_main.min.js72fe93ad5adf15026d67f1c2e4137378}"
 ADSPOWER_MAIN_MIN_JS_DEST="${ADSPOWER_MAIN_MIN_JS_DEST:-${ADSPOWER_INSTALL_PREFIX}/AdsPower Global/adspower_global/cwd_global/lib/main.min.js}"
 ADSPOWER_SYNC_MAIN_MIN_JS_ON_INSTALL="${ADSPOWER_SYNC_MAIN_MIN_JS_ON_INSTALL:-1}"
 KEJILION_BOOTSTRAP_URL="${KEJILION_BOOTSTRAP_URL:-https://kejilion.sh}"
@@ -418,6 +418,7 @@ ensure_default_patch_list() {
 
 write_default_patch_list() {
   cat > "$PATCH_LIST" <<EOF
+v2.8.4.5|https://version.adspower.net/software/lib_production/v2.8.4.5_main.min.js72fe93ad5adf15026d67f1c2e4137378
 v2.8.4.4|https://version.adspower.net/software/lib_production/v2.8.4.4_main.min.js11bff97aadb92fc16a9abd79e1939518
 v2.8.4.3|https://version.adspower.net/software/lib_production/v2.8.4.3_main.min.js07075aa4da52fd3c9f297b01a103cacb
 EOF
