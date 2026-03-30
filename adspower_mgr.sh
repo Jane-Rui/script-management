@@ -1035,13 +1035,47 @@ check_openclaw_ready() {
   return 0
 }
 
+find_skillhub_binary() {
+  if command -v skillhub >/dev/null 2>&1; then
+    command -v skillhub
+    return 0
+  fi
+
+  local candidates=(
+    "$HOME/.local/bin/skillhub"
+    "/root/.local/bin/skillhub"
+    "/usr/local/bin/skillhub"
+  )
+  local p
+  for p in "${candidates[@]}"; do
+    if [[ -x "$p" ]]; then
+      echo "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
 is_skillhub_installed() {
-  command -v skillhub >/dev/null 2>&1
+  find_skillhub_binary >/dev/null 2>&1
+}
+
+ensure_skillhub_link() {
+  local bin_path
+  bin_path="$(find_skillhub_binary)" || return 1
+
+  if command -v skillhub >/dev/null 2>&1; then
+    return 0
+  fi
+
+  ln -sf "$bin_path" /usr/local/bin/skillhub
+  info "已创建 SkillHub 命令软链接: /usr/local/bin/skillhub -> ${bin_path}"
 }
 
 install_skillhub_cli_if_needed() {
   if is_skillhub_installed; then
     success "已检测到 SkillHub CLI。"
+    ensure_skillhub_link || true
     return 0
   fi
 
@@ -1054,6 +1088,7 @@ install_skillhub_cli_if_needed() {
     return 1
   fi
 
+  ensure_skillhub_link || true
   if ! is_skillhub_installed; then
     error "SkillHub CLI 安装后仍不可用。"
     return 1
@@ -1064,11 +1099,16 @@ install_skillhub_cli_if_needed() {
 }
 
 install_adspower_browser_skill() {
+  local skillhub_bin
   check_openclaw_ready || return 1
   install_skillhub_cli_if_needed || return 1
+  skillhub_bin="$(find_skillhub_binary)" || {
+    error "未找到 SkillHub CLI 可执行文件。"
+    return 1
+  }
 
   info "开始安装 Skill: ${SKILLHUB_DEFAULT_SKILL}"
-  if (cd "$SCRIPT_DIR" && skillhub install "$SKILLHUB_DEFAULT_SKILL"); then
+  if (cd "$SCRIPT_DIR" && "$skillhub_bin" install "$SKILLHUB_DEFAULT_SKILL"); then
     success "Skill 安装成功: ${SKILLHUB_DEFAULT_SKILL}"
     return 0
   fi
@@ -1082,9 +1122,12 @@ show_skillhub_status() {
   echo "SkillHub 状态"
   echo "----------------------------------------"
   if is_skillhub_installed; then
+    local skillhub_bin
+    skillhub_bin="$(find_skillhub_binary)"
     echo -e "CLI 状态 : ${GREEN}已安装${NC}"
+    echo "CLI 路径 : ${skillhub_bin}"
     echo -n "CLI 版本 : "
-    skillhub --version 2>/dev/null || echo "无法读取"
+    "$skillhub_bin" --version 2>/dev/null || echo "无法读取"
   else
     echo -e "CLI 状态 : ${RED}未安装${NC}"
   fi
