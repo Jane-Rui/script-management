@@ -428,13 +428,24 @@ ensure_patch_list_healthy() {
   if [[ ! -f "$PATCH_LIST" || ! -s "$PATCH_LIST" ]]; then
     warn "补丁列表不存在或为空，已自动重建默认列表。"
     write_default_patch_list
-    return
-  fi
-
-  if ! tr -d '\r' < "$PATCH_LIST" | grep -qE '^[^|]+\|https?://'; then
+  elif ! tr -d '\r' < "$PATCH_LIST" | grep -qE '^[^|]+\|https?://'; then
     warn "补丁列表格式异常，已恢复默认列表。"
     write_default_patch_list
   fi
+
+  local required_entries=(
+    "v2.8.4.5|https://version.adspower.net/software/lib_production/v2.8.4.5_main.min.js72fe93ad5adf15026d67f1c2e4137378"
+    "v2.8.4.4|https://version.adspower.net/software/lib_production/v2.8.4.4_main.min.js11bff97aadb92fc16a9abd79e1939518"
+    "v2.8.4.3|https://version.adspower.net/software/lib_production/v2.8.4.3_main.min.js07075aa4da52fd3c9f297b01a103cacb"
+  )
+  local entry ver
+  for entry in "${required_entries[@]}"; do
+    ver="${entry%%|*}"
+    if ! tr -d '\r' < "$PATCH_LIST" | grep -q "^${ver}|"; then
+      echo "$entry" >> "$PATCH_LIST"
+      info "已补充默认补丁版本: $ver"
+    fi
+  done
 }
 
 prompt_api_key_if_needed() {
@@ -1675,7 +1686,7 @@ check_root() {
 main_menu() {
   while true; do
     load_config
-    ensure_default_patch_list
+    ensure_patch_list_healthy
 
     clear
     echo -e "${GREEN}========================================${NC}"
