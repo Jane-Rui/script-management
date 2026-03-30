@@ -13,7 +13,8 @@ NC=$'\033[0m'
 SCRIPT_PATH="$(readlink -f "$0")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 
-ADSPOWER_EXEC="${ADSPOWER_EXEC:-/opt/AdsPower Global/adspower_global}"
+ADSPOWER_INSTALL_PREFIX="${ADSPOWER_INSTALL_PREFIX:-/opt}"
+ADSPOWER_EXEC="${ADSPOWER_EXEC:-${ADSPOWER_INSTALL_PREFIX}/AdsPower Global/adspower_global}"
 CONFIG_FILE="${ADSPOWER_CONFIG_FILE:-$SCRIPT_DIR/adspower.env}"
 SERVICE_FILE="${ADSPOWER_SERVICE_FILE:-/etc/systemd/system/adspower.service}"
 PATCH_DIR="${ADSPOWER_PATCH_DIR:-$SCRIPT_DIR/patches}"
@@ -22,7 +23,23 @@ ACTIVE_PATCH_FILE="${ADSPOWER_ACTIVE_PATCH_FILE:-$SCRIPT_DIR/.active_patch}"
 TARGET_JS="${ADSPOWER_TARGET_JS:-$HOME/.config/adspower_global/cwd_global/lib/main.min.js}"
 ADSPOWER_DEFAULT_VERSION="${ADSPOWER_DEFAULT_VERSION:-7.12.29}"
 ADSPOWER_DEB_BASE="${ADSPOWER_DEB_BASE:-https://version.adspower.net/software/linux-x64-global}"
+ADSPOWER_DEB_PATH="${ADSPOWER_DEB_PATH:-}"
+ADSPOWER_BIN_LINK_DIR="${ADSPOWER_BIN_LINK_DIR:-/usr/local/bin}"
+ADSPOWER_BIN_LINK_NAME="${ADSPOWER_BIN_LINK_NAME:-adspower_global}"
+ADSPOWER_MAIN_MIN_JS_URL="${ADSPOWER_MAIN_MIN_JS_URL:-https://version.adspower.net/software/lib_production/v2.8.4.4_main.min.js11bff97aadb92fc16a9abd79e1939518}"
+ADSPOWER_MAIN_MIN_JS_DEST="${ADSPOWER_MAIN_MIN_JS_DEST:-${ADSPOWER_INSTALL_PREFIX}/AdsPower Global/adspower_global/cwd_global/lib/main.min.js}"
+ADSPOWER_SYNC_MAIN_MIN_JS_ON_INSTALL="${ADSPOWER_SYNC_MAIN_MIN_JS_ON_INSTALL:-1}"
 KEJILION_BOOTSTRAP_URL="${KEJILION_BOOTSTRAP_URL:-https://kejilion.sh}"
+SKILLHUB_INSTALL_SCRIPT_URL="${SKILLHUB_INSTALL_SCRIPT_URL:-https://skillhub-1388575217.cos.ap-guangzhou.myqcloud.com/install/install.sh}"
+SKILLHUB_DEFAULT_SKILL="${SKILLHUB_DEFAULT_SKILL:-adspower-browser}"
+OPENCODE_INSTALL_URL="${OPENCODE_INSTALL_URL:-https://opencode.ai/install}"
+OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
+OPENCODE_CONFIG_FILE="${OPENCODE_CONFIG_FILE:-$OPENCODE_CONFIG_DIR/opencode.json}"
+OPENCODE_BIN_LINK="${OPENCODE_BIN_LINK:-/usr/local/bin/opencode}"
+PATCH_AUTO_UPDATE_ON_START="${PATCH_AUTO_UPDATE_ON_START:-1}"
+PATCH_DOWNLOAD_TIMEOUT="${PATCH_DOWNLOAD_TIMEOUT:-20}"
+PATCH_DOWNLOAD_RETRIES="${PATCH_DOWNLOAD_RETRIES:-2}"
+PATCH_RETRY_DELAY="${PATCH_RETRY_DELAY:-2}"
 
 if [[ -d "/root/.config/adspower_global/cwd_global" ]]; then
   KERNEL_ROOT="${ADSPOWER_KERNEL_ROOT:-/root/.config/adspower_global/cwd_global}"
@@ -32,6 +49,7 @@ fi
 
 API_KEY=""
 API_PORT=50325
+TMP_DIRS=()
 
 mkdir -p "$PATCH_DIR"
 
@@ -41,14 +59,29 @@ on_error() {
 }
 trap on_error ERR
 
+cleanup_tmp_dirs() {
+  local d
+  for d in "${TMP_DIRS[@]}"; do
+    [[ -n "$d" && -d "$d" ]] && rm -rf "$d" 2>/dev/null || true
+  done
+}
+trap cleanup_tmp_dirs EXIT
+
 info() { echo -e "${CYAN}[INFO]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; }
 success() { echo -e "${GREEN}[OK]${NC} $*"; }
 
 pause_any_key() {
+  # Non-interactive context: skip pause to avoid read failures under set -e.
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    return 0
+  fi
   echo ""
-  read -r -n 1 -p "按任意键继续..." _
+  if ! read -r -n 1 -p "按任意键继续..." _; then
+    echo ""
+    return 0
+  fi
   echo ""
 }
 
@@ -92,18 +125,137 @@ require_cmd() {
 download_to_file() {
   local url="$1"
   local out="$2"
+  local timeout="${3:-$PATCH_DOWNLOAD_TIMEOUT}"
+  local retries="${4:-$PATCH_DOWNLOAD_RETRIES}"
+  local attempt=1
 
-  if command -v curl >/dev/null 2>&1; then
-    curl -fSL --progress-bar -o "$out" "$url"
-    return 0
-  fi
-  if command -v wget >/dev/null 2>&1; then
-    wget -q --show-progress -O "$out" "$url"
-    return 0
-  fi
+  while (( attempt <= retries )); do
+    if command -v curl >/dev/null 2>&1; then
+      if curl -fSL --connect-timeout "$timeout" --max-time "$timeout" --progress-bar -o "$out" "$url"; then
+        return 0
+      fi
+    elif command -v wget >/dev/null 2>&1; then
+      if wget -q --show-progress --timeout="$timeout" -O "$out" "$url"; then
+        return 0
+      fi
+    else
+      error "未找到 curl/wget，无法下载: $url"
+      return 1
+    fi
 
-  error "未找到 curl/wget，无法下载: $url"
+    warn "下载失败（第 ${attempt}/${retries} 次）: $url"
+    if (( attempt < retries )); then
+      sleep "$PATCH_RETRY_DELAY"
+    fi
+    ((attempt++))
+  done
+
   return 1
+}
+
+make_temp_dir() {
+  local d
+  d="$(mktemp -d)"
+  TMP_DIRS+=("$d")
+  echo "$d"
+}
+
+ensure_bin_link() {
+  local link_path="${ADSPOWER_BIN_LINK_DIR}/${ADSPOWER_BIN_LINK_NAME}"
+  mkdir -p "$ADSPOWER_BIN_LINK_DIR"
+  ln -sf "$ADSPOWER_EXEC" "$link_path"
+  info "已创建命令软链接: ${link_path} -> ${ADSPOWER_EXEC}"
+}
+
+update_main_min_js_from_url() {
+  local dest="${ADSPOWER_MAIN_MIN_JS_DEST}"
+  local dest_dir
+  dest_dir="$(dirname "$dest")"
+  local tmp_file
+  tmp_file="$(mktemp /tmp/main.min.js.XXXXXX)"
+
+  if [[ ! -d "$dest_dir" ]]; then
+    warn "目标目录不存在，跳过 main.min.js 更新: $dest_dir"
+    rm -f "$tmp_file" 2>/dev/null || true
+    return 1
+  fi
+
+  info "正在同步 main.min.js: ${ADSPOWER_MAIN_MIN_JS_URL}"
+  if ! download_to_file "$ADSPOWER_MAIN_MIN_JS_URL" "$tmp_file" "$PATCH_DOWNLOAD_TIMEOUT" "$PATCH_DOWNLOAD_RETRIES"; then
+    warn "main.min.js 下载失败，跳过替换。"
+    rm -f "$tmp_file" 2>/dev/null || true
+    return 1
+  fi
+
+  if [[ ! -s "$tmp_file" ]]; then
+    warn "main.min.js 文件为空，跳过替换。"
+    rm -f "$tmp_file" 2>/dev/null || true
+    return 1
+  fi
+
+  [[ -f "$dest" ]] && cp "$dest" "${dest}.bak" 2>/dev/null || true
+  if cp "$tmp_file" "$dest"; then
+    success "main.min.js 已更新: $dest"
+    rm -f "$tmp_file" 2>/dev/null || true
+    return 0
+  fi
+
+  warn "main.min.js 替换失败，尝试回滚。"
+  [[ -f "${dest}.bak" ]] && cp "${dest}.bak" "$dest" 2>/dev/null || true
+  rm -f "$tmp_file" 2>/dev/null || true
+  return 1
+}
+
+install_adspower_from_deb() {
+  local deb_file="$1"
+  [[ -f "$deb_file" ]] || {
+    error "未找到 .deb 安装包: $deb_file"
+    return 1
+  }
+
+  info "正在安装 AdsPower 包: $deb_file"
+  if command -v dpkg >/dev/null 2>&1 && is_debian_like; then
+    if ! dpkg -i "$deb_file"; then
+      warn "dpkg 安装失败，尝试修复依赖后重试..."
+      apt-get -f install -y
+      dpkg -i "$deb_file"
+    fi
+  else
+    local ext_dir
+    ext_dir="$(make_temp_dir)"
+    if command -v ar >/dev/null 2>&1; then
+      (cd "$ext_dir" && ar x "$deb_file")
+      if [[ -f "$ext_dir/data.tar.xz" ]]; then
+        tar -xJf "$ext_dir/data.tar.xz" -C /
+      elif [[ -f "$ext_dir/data.tar.gz" ]]; then
+        tar -xzf "$ext_dir/data.tar.gz" -C /
+      elif [[ -f "$ext_dir/data.tar" ]]; then
+        tar -xf "$ext_dir/data.tar" -C /
+      else
+        error "无法识别 .deb 数据内容（data.tar.* 缺失）。"
+        return 1
+      fi
+    elif command -v dpkg-deb >/dev/null 2>&1; then
+      dpkg-deb -x "$deb_file" /
+    else
+      error "缺少 ar 或 dpkg-deb，无法解包安装 .deb。"
+      return 1
+    fi
+  fi
+
+  [[ -f "$ADSPOWER_EXEC" ]] || {
+    error "安装完成但未找到可执行文件: $ADSPOWER_EXEC"
+    return 1
+  }
+  chmod +x "$ADSPOWER_EXEC"
+  ensure_bin_link
+
+  if [[ "$ADSPOWER_SYNC_MAIN_MIN_JS_ON_INSTALL" == "1" ]]; then
+    update_main_min_js_from_url || true
+  fi
+
+  success "AdsPower 安装完成。"
+  return 0
 }
 
 is_adspower_running() {
@@ -289,7 +441,11 @@ prompt_api_key_if_needed() {
     return 0
   fi
 
-  read -r -p "请输入 AdsPower API Key: " API_KEY
+  if ! read -r -p "请输入 AdsPower API Key: " API_KEY; then
+    API_KEY=""
+    error "未读取到 API Key 输入。"
+    return 1
+  fi
   API_KEY="$(trim "$API_KEY")"
   if [[ -z "$API_KEY" ]]; then
     error "API Key 不能为空。"
@@ -306,7 +462,7 @@ wait_api_ready() {
     res="$(get_api_raw_status)"
     [[ "$res" == *"success"* ]] && return 0
     sleep 1
-    ((i++))
+    ((++i))
   done
   return 1
 }
@@ -315,6 +471,7 @@ start_adspower() {
   load_config
   prompt_api_key_if_needed || return 1
   ensure_adspower_runtime_ready || return 1
+  auto_update_latest_patch_before_start
 
   if ! is_valid_port "$API_PORT"; then
     error "API 端口非法: $API_PORT"
@@ -329,14 +486,22 @@ start_adspower() {
       return 1
     fi
   fi
+  ensure_bin_link || true
 
   if is_adspower_running; then
     info "AdsPower 进程已在运行，检查 API 状态..."
-    if wait_api_ready 5; then
+    if wait_api_ready 20; then
       success "API 已在线，无需重复启动。"
       return 0
     fi
-    warn "进程存在但 API 未响应，建议重启服务。"
+    if is_port_listening "$API_PORT"; then
+      warn "检测到端口已监听但 API 仍未就绪，额外等待 15 秒..."
+      if wait_api_ready 15; then
+        success "API 已恢复在线。"
+        return 0
+      fi
+    fi
+    warn "进程存在但 API 仍未响应，建议重启服务。"
     return 1
   fi
 
@@ -363,7 +528,7 @@ stop_adspower() {
   local i=0
   while is_adspower_running && (( i < 10 )); do
     sleep 1
-    ((i++))
+    ((++i))
   done
 
   if is_adspower_running; then
@@ -502,7 +667,9 @@ kernel_menu() {
   echo "----------------------------------------"
 
   local k_in
-  read -r -p "请输入选项 (支持多选 1,2): " k_in
+  if ! read -r -p "请输入选项 (支持多选 1,2): " k_in; then
+    k_in=""
+  fi
   [[ -z "$k_in" || "$k_in" == "0" ]] && return
 
   local sels
@@ -517,7 +684,9 @@ kernel_menu() {
       download_kernel_api "${vs[$((opt - 1))]}"
     elif (( opt == 11 )); then
       local cv
-      read -r -p "版本号: " cv
+      if ! read -r -p "版本号: " cv; then
+        cv=""
+      fi
       cv="$(trim "$cv")"
       [[ -n "$cv" ]] && download_kernel_api "$cv" || warn "版本号为空，已跳过。"
     else
@@ -528,7 +697,9 @@ kernel_menu() {
 
 patch_add_url() {
   local url v tmp_file
-  read -r -p "地址: " url
+  if ! read -r -p "地址: " url; then
+    url=""
+  fi
   url="$(trim "$url")"
   [[ "$url" =~ ^https?:// ]] || {
     error "补丁地址必须以 http:// 或 https:// 开头。"
@@ -537,7 +708,9 @@ patch_add_url() {
 
   v="$(echo "$url" | sed -n 's/.*\/\(v[0-9.]*\)_main.*/\1/p')"
   if [[ -z "$v" ]]; then
-    read -r -p "版本 (例如 v2.8.4.4): " v
+    if ! read -r -p "版本 (例如 v2.8.4.4): " v; then
+      v=""
+    fi
     v="$(trim "$v")"
   fi
   [[ "$v" =~ ^v[0-9.]+$ ]] || {
@@ -590,11 +763,13 @@ patch_apply() {
   for item in "${entries[@]}"; do
     vshow="${item%%|*}"
     echo "$i. $vshow"
-    ((i++))
+    ((++i))
   done
 
   local p_c
-  read -r -p "编号 (0 返回): " p_c
+  if ! read -r -p "编号 (0 返回): " p_c; then
+    p_c=""
+  fi
   [[ -z "$p_c" || "$p_c" == "0" ]] && return 0
 
   if ! is_number "$p_c" || (( p_c < 1 || p_c > ${#entries[@]} )); then
@@ -644,13 +819,109 @@ patch_menu() {
   echo "0. 返回主菜单"
 
   local o
-  read -r -p "选项: " o
+  if ! read -r -p "选项: " o; then
+    o=""
+  fi
   case "$o" in
+    "") return ;;
     1) patch_add_url ;;
     2) patch_apply ;;
     0) return ;;
     *) warn "无效选项: $o" ;;
   esac
+}
+
+get_latest_patch_entry() {
+  ensure_patch_list_healthy
+
+  local lines=()
+  while IFS='|' read -r v url; do
+    v="${v//$'\r'/}"
+    url="${url//$'\r'/}"
+    [[ -z "$v" || -z "$url" ]] && continue
+    [[ "$v" =~ ^v[0-9.]+$ ]] || continue
+    [[ "$url" =~ ^https?:// ]] || continue
+    lines+=("$v|$url")
+  done < "$PATCH_LIST"
+
+  (( ${#lines[@]} > 0 )) || return 1
+
+  local latest_ver
+  latest_ver="$(printf '%s\n' "${lines[@]}" | cut -d'|' -f1 | sort -V | tail -1)"
+  [[ -n "$latest_ver" ]] || return 1
+
+  local line
+  for line in "${lines[@]}"; do
+    if [[ "${line%%|*}" == "$latest_ver" ]]; then
+      echo "$line"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+apply_patch_noninteractive() {
+  local version="$1"
+  local url="$2"
+  local patch_file="$PATCH_DIR/main.min.js.$version"
+  local tmp_file="${patch_file}.download"
+
+  mkdir -p "$PATCH_DIR"
+
+  info "正在拉取最新补丁: $version"
+  if ! download_to_file "$url" "$tmp_file" "$PATCH_DOWNLOAD_TIMEOUT" "$PATCH_DOWNLOAD_RETRIES"; then
+    warn "补丁拉取失败（网络异常或超时），将继续使用当前本地补丁。"
+    rm -f "$tmp_file" 2>/dev/null || true
+    return 1
+  fi
+
+  if [[ ! -s "$tmp_file" ]]; then
+    warn "补丁文件为空，忽略本次更新。"
+    rm -f "$tmp_file" 2>/dev/null || true
+    return 1
+  fi
+
+  mv -f "$tmp_file" "$patch_file"
+  mkdir -p "$(dirname "$TARGET_JS")"
+
+  if [[ -f "$TARGET_JS" ]]; then
+    cp "$TARGET_JS" "$TARGET_JS.bak" 2>/dev/null || true
+  fi
+
+  if cp "$patch_file" "$TARGET_JS"; then
+    echo "$version" > "$ACTIVE_PATCH_FILE"
+    success "已自动应用最新补丁: $version"
+    return 0
+  fi
+
+  warn "补丁复制失败，尝试回滚。"
+  if [[ -f "$TARGET_JS.bak" ]]; then
+    cp "$TARGET_JS.bak" "$TARGET_JS" 2>/dev/null || true
+  fi
+  return 1
+}
+
+auto_update_latest_patch_before_start() {
+  [[ "$PATCH_AUTO_UPDATE_ON_START" == "1" ]] || return 0
+
+  local latest version url current
+  if ! latest="$(get_latest_patch_entry)"; then
+    warn "未找到可用补丁条目，跳过自动更新。"
+    return 0
+  fi
+
+  version="${latest%%|*}"
+  url="${latest#*|}"
+  current=""
+  [[ -f "$ACTIVE_PATCH_FILE" ]] && current="$(cat "$ACTIVE_PATCH_FILE" 2>/dev/null || true)"
+
+  if [[ "$current" == "$version" && -f "$TARGET_JS" ]]; then
+    info "当前已是最新补丁版本: $version"
+    return 0
+  fi
+
+  apply_patch_noninteractive "$version" "$url" || true
 }
 
 run_kejilion_openclaw() {
@@ -705,8 +976,11 @@ openclaw_menu() {
     echo "----------------------------------------"
 
     local oc_choice
-    read -r -p "请输入选项: " oc_choice
+    if ! read -r -p "请输入选项: " oc_choice; then
+      oc_choice=""
+    fi
     case "$oc_choice" in
+      "") return ;;
       1)
         run_kejilion_openclaw "app-openclaw"
         pause_any_key
@@ -730,6 +1004,329 @@ openclaw_menu() {
   done
 }
 
+check_openclaw_ready() {
+  if ! command -v openclaw >/dev/null 2>&1; then
+    error "未检测到 openclaw 命令，请先完成 OpenClaw 安装。"
+    return 1
+  fi
+
+  if ! openclaw --version >/dev/null 2>&1; then
+    error "openclaw 命令异常，无法获取版本信息。"
+    return 1
+  fi
+
+  if ! openclaw gateway status >/dev/null 2>&1; then
+    warn "OpenClaw Gateway 状态异常，请先确认 OpenClaw 正常运行后再安装技能。"
+    return 1
+  fi
+
+  return 0
+}
+
+is_skillhub_installed() {
+  command -v skillhub >/dev/null 2>&1
+}
+
+install_skillhub_cli_if_needed() {
+  if is_skillhub_installed; then
+    success "已检测到 SkillHub CLI。"
+    return 0
+  fi
+
+  require_cmd bash || return 1
+  require_cmd curl || return 1
+  info "未检测到 SkillHub CLI，开始按 CLI-only 模式安装..."
+
+  if ! bash -c "curl -fsSL \"$SKILLHUB_INSTALL_SCRIPT_URL\" | bash -s -- --cli-only"; then
+    error "SkillHub CLI 安装失败。"
+    return 1
+  fi
+
+  if ! is_skillhub_installed; then
+    error "SkillHub CLI 安装后仍不可用。"
+    return 1
+  fi
+
+  success "SkillHub CLI 安装完成。"
+  return 0
+}
+
+install_adspower_browser_skill() {
+  check_openclaw_ready || return 1
+  install_skillhub_cli_if_needed || return 1
+
+  info "开始安装 Skill: ${SKILLHUB_DEFAULT_SKILL}"
+  if (cd "$SCRIPT_DIR" && skillhub install "$SKILLHUB_DEFAULT_SKILL"); then
+    success "Skill 安装成功: ${SKILLHUB_DEFAULT_SKILL}"
+    return 0
+  fi
+
+  error "Skill 安装失败: ${SKILLHUB_DEFAULT_SKILL}"
+  return 1
+}
+
+show_skillhub_status() {
+  echo ""
+  echo "SkillHub 状态"
+  echo "----------------------------------------"
+  if is_skillhub_installed; then
+    echo -e "CLI 状态 : ${GREEN}已安装${NC}"
+    echo -n "CLI 版本 : "
+    skillhub --version 2>/dev/null || echo "无法读取"
+  else
+    echo -e "CLI 状态 : ${RED}未安装${NC}"
+  fi
+  if command -v openclaw >/dev/null 2>&1; then
+    echo -e "OpenClaw : ${GREEN}已安装${NC}"
+    openclaw gateway status >/dev/null 2>&1 && echo -e "Gateway  : ${GREEN}正常${NC}" || echo -e "Gateway  : ${YELLOW}异常${NC}"
+  else
+    echo -e "OpenClaw : ${RED}未安装${NC}"
+  fi
+  echo "----------------------------------------"
+}
+
+skillhub_menu() {
+  while true; do
+    clear
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "      SkillHub 技能菜单"
+    echo -e "${GREEN}========================================${NC}"
+    echo "说明: 先检查 OpenClaw，再安装 SkillHub CLI（仅 CLI），最后安装 adspower-browser。"
+    echo "----------------------------------------"
+    echo "1. 一键安装 adspower-browser 技能"
+    echo "2. 检查 SkillHub / OpenClaw 状态"
+    echo "0. 返回主菜单"
+    echo "----------------------------------------"
+
+    local s_choice
+    if ! read -r -p "请输入选项: " s_choice; then
+      s_choice=""
+    fi
+    case "$s_choice" in
+      "") return ;;
+      1)
+        install_adspower_browser_skill
+        pause_any_key
+        ;;
+      2)
+        show_skillhub_status
+        pause_any_key
+        ;;
+      0)
+        return
+        ;;
+      *)
+        warn "无效选项: $s_choice"
+        pause_any_key
+        ;;
+    esac
+  done
+}
+
+find_opencode_binary() {
+  if command -v opencode >/dev/null 2>&1; then
+    command -v opencode
+    return 0
+  fi
+
+  local candidates=(
+    "$HOME/.opencode/bin/opencode"
+    "/root/.opencode/bin/opencode"
+    "/usr/local/bin/opencode"
+  )
+  local p
+  for p in "${candidates[@]}"; do
+    if [[ -x "$p" ]]; then
+      echo "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
+is_opencode_installed() {
+  find_opencode_binary >/dev/null 2>&1
+}
+
+ensure_opencode_link() {
+  local bin_path
+  bin_path="$(find_opencode_binary)" || return 1
+
+  if command -v opencode >/dev/null 2>&1; then
+    return 0
+  fi
+
+  ln -sf "$bin_path" "$OPENCODE_BIN_LINK"
+  info "已创建 OpenCode 命令软链接: ${OPENCODE_BIN_LINK} -> ${bin_path}"
+}
+
+install_opencode_cli() {
+  require_cmd bash || return 1
+  require_cmd curl || return 1
+
+  if is_opencode_installed; then
+    success "已检测到 OpenCode CLI。"
+    ensure_opencode_link || true
+    return 0
+  fi
+
+  info "开始安装 OpenCode CLI..."
+  if ! bash -c "curl -fsSL \"$OPENCODE_INSTALL_URL\" | bash"; then
+    error "OpenCode CLI 安装失败。"
+    return 1
+  fi
+
+  ensure_opencode_link || true
+  if ! is_opencode_installed; then
+    error "OpenCode CLI 安装后仍不可用。"
+    return 1
+  fi
+
+  success "OpenCode CLI 安装完成。"
+  return 0
+}
+
+write_default_opencode_permission_config() {
+  local out_file="$1"
+  cat > "$out_file" <<'EOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "*": "allow",
+    "edit": "allow",
+    "bash": {
+      "*": "allow",
+      "rm *": "ask",
+      "rmdir *": "ask",
+      "unlink *": "ask",
+      "find * -delete*": "ask",
+      "git clean *": "ask",
+      "shred *": "ask",
+      "srm *": "ask"
+    }
+  }
+}
+EOF
+}
+
+configure_opencode_default_permissions() {
+  mkdir -p "$OPENCODE_CONFIG_DIR"
+
+  local tmp_cfg
+  tmp_cfg="$(mktemp)"
+  write_default_opencode_permission_config "$tmp_cfg"
+
+  if [[ -f "$OPENCODE_CONFIG_FILE" ]]; then
+    local backup_file
+    backup_file="${OPENCODE_CONFIG_FILE}.bak.$(date +%Y%m%d%H%M%S)"
+    cp "$OPENCODE_CONFIG_FILE" "$backup_file"
+    info "已备份 OpenCode 配置: $backup_file"
+  fi
+
+  if [[ -f "$OPENCODE_CONFIG_FILE" ]] && command -v jq >/dev/null 2>&1 && jq -e . "$OPENCODE_CONFIG_FILE" >/dev/null 2>&1; then
+    local merged_cfg
+    merged_cfg="$(mktemp)"
+    if jq '
+      .["$schema"] = "https://opencode.ai/config.json" |
+      .permission = (.permission // {}) |
+      .permission."*" = "allow" |
+      .permission.edit = "allow" |
+      .permission.bash = (.permission.bash // {}) |
+      .permission.bash."*" = "allow" |
+      .permission.bash."rm *" = "ask" |
+      .permission.bash."rmdir *" = "ask" |
+      .permission.bash."unlink *" = "ask" |
+      .permission.bash."find * -delete*" = "ask" |
+      .permission.bash."git clean *" = "ask" |
+      .permission.bash."shred *" = "ask" |
+      .permission.bash."srm *" = "ask"
+    ' "$OPENCODE_CONFIG_FILE" > "$merged_cfg"; then
+      mv -f "$merged_cfg" "$OPENCODE_CONFIG_FILE"
+      chmod 600 "$OPENCODE_CONFIG_FILE" 2>/dev/null || true
+      success "OpenCode 授权模式已更新（非删除操作默认放行，删除类命令需确认）。"
+      rm -f "$tmp_cfg" 2>/dev/null || true
+      return 0
+    fi
+    warn "检测到 jq 合并失败，将改为写入默认授权模板。"
+    rm -f "$merged_cfg" 2>/dev/null || true
+  fi
+
+  mv -f "$tmp_cfg" "$OPENCODE_CONFIG_FILE"
+  chmod 600 "$OPENCODE_CONFIG_FILE" 2>/dev/null || true
+  success "OpenCode 授权模式已写入: $OPENCODE_CONFIG_FILE"
+  return 0
+}
+
+show_opencode_status() {
+  echo ""
+  echo "OpenCode 状态"
+  echo "----------------------------------------"
+  if is_opencode_installed; then
+    echo -e "CLI 状态 : ${GREEN}已安装${NC}"
+    echo -n "CLI 路径 : "
+    find_opencode_binary 2>/dev/null || echo "未知"
+    echo -n "CLI 版本 : "
+    opencode --version 2>/dev/null || echo "无法读取"
+  else
+    echo -e "CLI 状态 : ${RED}未安装${NC}"
+  fi
+
+  if [[ -f "$OPENCODE_CONFIG_FILE" ]]; then
+    echo -e "配置文件 : ${GREEN}${OPENCODE_CONFIG_FILE}${NC}"
+    if grep -q '"rm \*"[[:space:]]*:[[:space:]]*"ask"' "$OPENCODE_CONFIG_FILE" 2>/dev/null; then
+      echo -e "删除确认 : ${GREEN}已启用${NC}"
+    else
+      echo -e "删除确认 : ${YELLOW}未检测到 rm 规则${NC}"
+    fi
+  else
+    echo -e "配置文件 : ${YELLOW}未生成${NC}"
+  fi
+  echo "----------------------------------------"
+}
+
+opencode_menu() {
+  while true; do
+    clear
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "      OpenCode 安装与授权"
+    echo -e "${GREEN}========================================${NC}"
+    echo "说明: 默认策略为非删除操作自动放行；删除类命令（rm/rmdir/unlink 等）保留确认。"
+    echo "----------------------------------------"
+    echo "1. 安装 OpenCode 并应用默认授权策略"
+    echo "2. 仅应用默认授权策略"
+    echo "3. 查看 OpenCode 状态"
+    echo "0. 返回主菜单"
+    echo "----------------------------------------"
+
+    local ocd_choice
+    if ! read -r -p "请输入选项: " ocd_choice; then
+      ocd_choice=""
+    fi
+    case "$ocd_choice" in
+      "") return ;;
+      1)
+        install_opencode_cli && configure_opencode_default_permissions
+        pause_any_key
+        ;;
+      2)
+        configure_opencode_default_permissions
+        pause_any_key
+        ;;
+      3)
+        show_opencode_status
+        pause_any_key
+        ;;
+      0)
+        return
+        ;;
+      *)
+        warn "无效选项: $ocd_choice"
+        pause_any_key
+        ;;
+    esac
+  done
+}
+
 is_debian_like() {
   command -v apt-get >/dev/null 2>&1
 }
@@ -738,16 +1335,14 @@ is_rhel_like() {
   [[ -f /etc/redhat-release ]] && (command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1)
 }
 
-DEBIAN_ADSPOWER_DEPS=(
+DEBIAN_ADSPOWER_DEPS_BASE=(
   xvfb
   xz-utils
   ca-certificates
   fonts-liberation
-  libasound2
   libatk-bridge2.0-0
   libatk1.0-0
   libatspi2.0-0
-  libcups2
   libdbus-1-3
   libdrm2
   libgbm1
@@ -759,12 +1354,12 @@ DEBIAN_ADSPOWER_DEPS=(
   libxfixes3
   libxkbcommon0
   libxrandr2
+  libxss1
   curl
   wget
 )
 
-RHEL_ADSPOWER_DEPS=(
-  xorg-x11-server-Xvfb
+RHEL_ADSPOWER_DEPS_BASE=(
   xz
   ca-certificates
   liberation-fonts-common
@@ -790,24 +1385,103 @@ RHEL_ADSPOWER_DEPS=(
 )
 
 print_debian_dep_install_cmd() {
+  local debian_deps=()
+  mapfile -t debian_deps < <(get_debian_ads_deps)
   local joined
-  joined="$(printf '%s ' "${DEBIAN_ADSPOWER_DEPS[@]}")"
+  joined="$(printf '%s ' "${debian_deps[@]}")"
   echo "sudo apt-get update && sudo apt-get install -y --no-install-recommends ${joined}"
 }
 
+resolve_debian_pkg_variant() {
+  local preferred="$1"
+  shift
+  local candidate
+  for candidate in "$preferred" "$@"; do
+    if dpkg -s "$candidate" >/dev/null 2>&1; then
+      echo "$candidate"
+      return 0
+    fi
+    if command -v apt-cache >/dev/null 2>&1 && apt-cache show "$candidate" >/dev/null 2>&1; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  echo "$preferred"
+  return 0
+}
+
+get_debian_ads_deps() {
+  local deps=("${DEBIAN_ADSPOWER_DEPS_BASE[@]}")
+  local asound_pkg cups_pkg
+  asound_pkg="$(resolve_debian_pkg_variant "libasound2" "libasound2t64")"
+  cups_pkg="$(resolve_debian_pkg_variant "libcups2" "libcups2t64")"
+  deps+=("$asound_pkg" "$cups_pkg")
+  printf '%s\n' "${deps[@]}"
+}
+
 check_missing_debian_deps() {
+  local deps=()
+  mapfile -t deps < <(get_debian_ads_deps)
   local missing=()
   local p
-  for p in "${DEBIAN_ADSPOWER_DEPS[@]}"; do
+  for p in "${deps[@]}"; do
     dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p")
   done
   printf '%s\n' "${missing[@]}"
 }
 
+get_rhel_major() {
+  local v
+  v="$(rpm -E '%{rhel}' 2>/dev/null || echo "")"
+  if [[ "$v" =~ ^[0-9]+$ ]]; then
+    echo "$v"
+  else
+    echo "0"
+  fi
+}
+
+get_rhel_virtual_display_pkg() {
+  local major
+  major="$(get_rhel_major)"
+  if (( major >= 10 )); then
+    echo "tigervnc-server"
+  else
+    echo "xorg-x11-server-Xvfb"
+  fi
+}
+
+get_rhel_ads_deps() {
+  local deps=("${RHEL_ADSPOWER_DEPS_BASE[@]}")
+  deps+=("$(get_rhel_virtual_display_pkg)")
+  printf '%s\n' "${deps[@]}"
+}
+
+prepare_rhel_repos() {
+  if ! command -v dnf >/dev/null 2>&1; then
+    return 0
+  fi
+
+  rpm -q dnf-plugins-core >/dev/null 2>&1 || dnf install -y dnf-plugins-core >/dev/null 2>&1 || true
+  dnf config-manager --set-enabled appstream baseos >/dev/null 2>&1 || true
+
+  local major
+  major="$(get_rhel_major)"
+  if (( major >= 10 )); then
+    dnf config-manager --set-enabled crb >/dev/null 2>&1 || true
+  fi
+
+  if ! rpm -q epel-release >/dev/null 2>&1; then
+    dnf install -y epel-release >/dev/null 2>&1 || true
+  fi
+  dnf makecache >/dev/null 2>&1 || true
+}
+
 check_missing_rhel_deps() {
+  local deps=()
+  mapfile -t deps < <(get_rhel_ads_deps)
   local missing=()
   local p
-  for p in "${RHEL_ADSPOWER_DEPS[@]}"; do
+  for p in "${deps[@]}"; do
     rpm -q "$p" >/dev/null 2>&1 || missing+=("$p")
   done
   printf '%s\n' "${missing[@]}"
@@ -833,8 +1507,10 @@ ensure_adspower_runtime_ready() {
     if (( ${#missing[@]} > 0 )); then
       error "检测到 RHEL 运行依赖缺失 (${#missing[@]} 个): ${missing[*]}"
       warn "请先安装依赖后再启动 AdsPower。"
+      local rhel_deps=()
+      mapfile -t rhel_deps < <(get_rhel_ads_deps)
       local joined
-      joined="$(printf '%s ' "${RHEL_ADSPOWER_DEPS[@]}")"
+      joined="$(printf '%s ' "${rhel_deps[@]}")"
       echo "推荐命令:"
       echo "sudo dnf install -y ${joined}"
       return 1
@@ -849,18 +1525,43 @@ ensure_adspower_runtime_ready() {
 install_runtime_deps() {
   if is_debian_like; then
     info "检测到 Debian/Ubuntu，安装 AdsPower 运行依赖..."
+    local missing=()
+    mapfile -t missing < <(check_missing_debian_deps)
+    local tools=(iproute2 procps grep sed gawk)
+    local t
+    for t in "${tools[@]}"; do
+      dpkg -s "$t" >/dev/null 2>&1 || missing+=("$t")
+    done
+
     apt-get update
-    apt-get install -y --no-install-recommends "${DEBIAN_ADSPOWER_DEPS[@]}"
-    apt-get install -y --no-install-recommends iproute2 procps grep sed gawk
+    if (( ${#missing[@]} > 0 )); then
+      info "将安装缺失包 (${#missing[@]} 个): ${missing[*]}"
+      apt-get install -y --no-install-recommends "${missing[@]}"
+    else
+      info "依赖已齐全，跳过安装。"
+    fi
     return 0
   fi
 
   if is_rhel_like; then
     info "检测到 RHEL 系，安装 AdsPower 运行依赖..."
+    prepare_rhel_repos
     local pkg_mgr="dnf"
     command -v dnf >/dev/null 2>&1 || pkg_mgr="yum"
-    "$pkg_mgr" install -y "${RHEL_ADSPOWER_DEPS[@]}"
-    "$pkg_mgr" install -y iproute procps-ng grep sed gawk
+    local missing=()
+    mapfile -t missing < <(check_missing_rhel_deps)
+    local tools=(iproute procps-ng grep sed gawk)
+    local t
+    for t in "${tools[@]}"; do
+      rpm -q "$t" >/dev/null 2>&1 || missing+=("$t")
+    done
+
+    if (( ${#missing[@]} > 0 )); then
+      info "将安装缺失包 (${#missing[@]} 个): ${missing[*]}"
+      "$pkg_mgr" install -y "${missing[@]}"
+    else
+      info "依赖已齐全，跳过安装。"
+    fi
     return 0
   fi
 
@@ -875,40 +1576,40 @@ install_or_fix_adspower() {
 
   if [[ -f "$ADSPOWER_EXEC" ]]; then
     chmod +x "$ADSPOWER_EXEC"
+    ensure_bin_link
+    if [[ "$ADSPOWER_SYNC_MAIN_MIN_JS_ON_INSTALL" == "1" ]]; then
+      update_main_min_js_from_url || true
+    fi
     info "检测到 AdsPower 已安装，执行启动检查..."
     save_config
     start_adspower || true
     return 0
   fi
 
-  if is_debian_like; then
-    local deb_file="/tmp/AdsPower-Global-${ADSPOWER_DEFAULT_VERSION}-x64.deb"
-    local deb_url="${ADSPOWER_DEB_BASE}/${ADSPOWER_DEFAULT_VERSION}/AdsPower-Global-${ADSPOWER_DEFAULT_VERSION}-x64.deb"
-
+  local deb_file=""
+  if [[ -n "$ADSPOWER_DEB_PATH" ]]; then
+    if [[ -f "$ADSPOWER_DEB_PATH" ]]; then
+      deb_file="$ADSPOWER_DEB_PATH"
+      info "使用本地 .deb 安装包: $deb_file"
+    else
+      error "指定的 ADSPOWER_DEB_PATH 不存在: $ADSPOWER_DEB_PATH"
+      return 1
+    fi
+  else
+    local deb_url tmp_dir
+    deb_url="${ADSPOWER_DEB_BASE}/${ADSPOWER_DEFAULT_VERSION}/AdsPower-Global-${ADSPOWER_DEFAULT_VERSION}-x64.deb"
+    tmp_dir="$(make_temp_dir)"
+    deb_file="${tmp_dir}/AdsPower-Global-${ADSPOWER_DEFAULT_VERSION}-x64.deb"
     info "未检测到 AdsPower，开始下载: $deb_url"
     download_to_file "$deb_url" "$deb_file" || {
-      error "下载失败，请手动下载安装包。"
+      error "下载失败，请手动下载安装包，或设置 ADSPOWER_DEB_PATH。"
       return 1
     }
-
-    if ! dpkg -i "$deb_file"; then
-      warn "dpkg 安装失败，尝试修复依赖..."
-      apt-get -f install -y
-      dpkg -i "$deb_file"
-    fi
-
-    [[ -f "$ADSPOWER_EXEC" ]] || {
-      error "安装后仍未找到: $ADSPOWER_EXEC"
-      return 1
-    }
-
-    chmod +x "$ADSPOWER_EXEC"
-    save_config
-    start_adspower || true
-    return 0
   fi
 
-  warn "当前非 Debian/Ubuntu，未自动安装 AdsPower 包。请手动安装后再使用启动功能。"
+  install_adspower_from_deb "$deb_file" || return 1
+  save_config
+  start_adspower || true
   return 0
 }
 
@@ -951,7 +1652,9 @@ show_api_detail() {
 
 change_api_key() {
   local new_key
-  read -r -p "输入新 Key: " new_key
+  if ! read -r -p "输入新 Key: " new_key; then
+    new_key=""
+  fi
   new_key="$(trim "$new_key")"
   [[ -n "$new_key" ]] || {
     error "Key 不能为空。"
@@ -988,7 +1691,7 @@ main_menu() {
     printf "当前 Key : %b\n" "$(get_masked_key)"
 
     echo -e "${GREEN}----------------------------------------${NC}"
-    echo -e "1. ${CYAN}环境安装/修复${NC}"
+    echo -e "1. ${CYAN}安装/修复 AdsPower${NC}"
     echo -e "2. ${GREEN}启动服务 (Start)${NC}"
     echo -e "3. ${RED}停止服务 (Stop)${NC}"
     echo -e "4. ${YELLOW}重启服务 (Restart)${NC}"
@@ -998,12 +1701,17 @@ main_menu() {
     echo "8. 补丁管理菜单"
     echo "9. 内核管理菜单"
     echo -e "10. ${CYAN}OpenClaw（上游同步）${NC}"
+    echo -e "11. ${CYAN}SkillHub 技能安装${NC}"
+    echo -e "12. ${CYAN}OpenCode 安装与授权${NC}"
     echo "0. 退出脚本"
     echo "----------------------------------------"
 
     local choice
-    read -r -p "请输入选项: " choice
+    if ! read -r -p "请输入选项: " choice; then
+      choice=""
+    fi
     case "$choice" in
+      "") continue ;;
       1) install_or_fix_adspower ;;
       2) start_adspower ;;
       3) stop_adspower ;;
@@ -1014,6 +1722,8 @@ main_menu() {
       8) patch_menu ;;
       9) kernel_menu ;;
       10) openclaw_menu ;;
+      11) skillhub_menu ;;
+      12) opencode_menu ;;
       0) exit 0 ;;
       *) warn "无效选项: $choice" ;;
     esac

@@ -11,8 +11,13 @@
 - 开机自启（systemd）开关
 - 补丁管理（添加补丁地址、应用补丁、失败回滚）
 - Chrome 内核下载菜单
-- 环境安装/修复（按系统自动安装基础依赖）
+- 环境安装/修复（跨 Debian/RHEL，仅安装缺失依赖）
+- 支持本地 `.deb` 或自动下载安装 AdsPower
+- 自动创建命令软链接：`/usr/local/bin/adspower_global`
+- 安装阶段支持同步更新 `main.min.js`（可开关）
 - OpenClaw 上游菜单融合（通过 Kejilion 最新脚本实时进入）
+- SkillHub 技能菜单（先检查 OpenClaw，再按 CLI-only 安装 SkillHub，并安装 `adspower-browser`）
+- OpenCode 菜单：安装 OpenCode CLI，并设置“非删除操作默认放行、删除类命令需确认”授权策略
 
 ## 运行要求
 - Linux 环境
@@ -35,11 +40,23 @@ API_PORT=50325
 ```
 
 也支持通过环境变量覆盖关键路径（可选）：
+- `ADSPOWER_INSTALL_PREFIX`
 - `ADSPOWER_EXEC`
 - `ADSPOWER_CONFIG_FILE`
 - `ADSPOWER_SERVICE_FILE`
 - `ADSPOWER_PATCH_DIR`
 - `ADSPOWER_TARGET_JS`
+- `ADSPOWER_DEB_PATH`
+- `ADSPOWER_BIN_LINK_DIR`
+- `ADSPOWER_MAIN_MIN_JS_URL`
+- `ADSPOWER_MAIN_MIN_JS_DEST`
+- `ADSPOWER_SYNC_MAIN_MIN_JS_ON_INSTALL`
+- `SKILLHUB_INSTALL_SCRIPT_URL`
+- `SKILLHUB_DEFAULT_SKILL`
+- `OPENCODE_INSTALL_URL`
+- `OPENCODE_CONFIG_DIR`
+- `OPENCODE_CONFIG_FILE`
+- `OPENCODE_BIN_LINK`
 
 ## 常见排障
 - 启动后 API 不在线：
@@ -60,3 +77,7 @@ API_PORT=50325
 2. 检查 `bash` 与 `curl` 是否可用。
 3. 如果拉取地址受限，可通过环境变量覆盖：
    `KEJILION_BOOTSTRAP_URL=https://kejilion.sh`
+
+- OpenCode 安装后命令不可用：
+1. 重新进入菜单执行一次“安装 OpenCode 并应用默认授权策略”。
+2. 检查 `OPENCODE_BIN_LINK` 是否在 `PATH` 中（默认 `/usr/local/bin/opencode`）。
