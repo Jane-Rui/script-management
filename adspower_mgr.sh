@@ -37,7 +37,7 @@ ADSPOWER_MAIN_MIN_JS_URL="${ADSPOWER_MAIN_MIN_JS_URL:-https://version.adspower.n
 ADSPOWER_MAIN_MIN_JS_DEST="${ADSPOWER_MAIN_MIN_JS_DEST:-${ADSPOWER_INSTALL_PREFIX}/AdsPower Global/adspower_global/cwd_global/lib/main.min.js}"
 ADSPOWER_SYNC_MAIN_MIN_JS_ON_INSTALL="${ADSPOWER_SYNC_MAIN_MIN_JS_ON_INSTALL:-1}"
 KEJILION_BOOTSTRAP_URL="${KEJILION_BOOTSTRAP_URL:-https://kejilion.sh}"
-SKILLHUB_INSTALL_SCRIPT_URL="${SKILLHUB_INSTALL_SCRIPT_URL:-https://skillhub-1388575217.cos.ap-guangzhou.myqcloud.com/install/install.sh}"
+SKILLHUB_INSTALL_SCRIPT_URL="${SKILLHUB_INSTALL_SCRIPT_URL:-https://skillhub.cn/install/install.sh}"
 SKILLHUB_DEFAULT_SKILL="${SKILLHUB_DEFAULT_SKILL:-adspower-browser}"
 OPENCODE_INSTALL_URL="${OPENCODE_INSTALL_URL:-https://opencode.ai/install}"
 OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
@@ -157,7 +157,15 @@ is_yes() {
 
 confirm_action() {
   local prompt="$1"
+  local default_yes="${2:-0}"
   local ans
+  if [[ "$default_yes" == "1" ]]; then
+    read -r -p "$prompt [Y/n]: " ans
+    ans="$(trim "$ans")"
+    [[ -z "$ans" ]] && return 0
+    is_yes "$ans"
+    return $?
+  fi
   read -r -p "$prompt [y/N]: " ans
   is_yes "$ans"
 }
@@ -528,11 +536,15 @@ wait_api_ready() {
 }
 
 start_adspower() {
+  local skip_dep_prompt="${1:-0}"
   load_config
   prompt_api_key_if_needed || return 1
   if ! ensure_adspower_runtime_ready; then
+    if [[ "$skip_dep_prompt" == "1" ]]; then
+      return 1
+    fi
     if [[ -t 0 && -t 1 ]]; then
-      if confirm_action "检测到运行依赖缺失，是否立即自动安装？"; then
+      if confirm_action "检测到运行依赖缺失，是否立即自动安装？" "1"; then
         install_runtime_deps "0" || return 1
         ensure_adspower_runtime_ready || return 1
       else
@@ -1212,9 +1224,9 @@ install_skillhub_cli_if_needed() {
 
   require_cmd bash || return 1
   require_cmd curl || return 1
-  info "未检测到 SkillHub CLI，开始按 CLI-only 模式安装..."
+  info "未检测到 SkillHub CLI，开始安装并设为优先技能安装源..."
 
-  if ! bash -c "curl -fsSL \"$SKILLHUB_INSTALL_SCRIPT_URL\" | bash -s -- --cli-only"; then
+  if ! bash -c "curl -fsSL \"$SKILLHUB_INSTALL_SCRIPT_URL\" | bash"; then
     error "SkillHub CLI 安装失败。"
     return 1
   fi
@@ -1231,7 +1243,6 @@ install_skillhub_cli_if_needed() {
 
 install_adspower_browser_skill() {
   local skillhub_bin
-  check_openclaw_ready || return 1
   install_skillhub_cli_if_needed || return 1
   skillhub_bin="$(find_skillhub_binary)" || {
     error "未找到 SkillHub CLI 可执行文件。"
@@ -1262,12 +1273,6 @@ show_skillhub_status() {
   else
     echo -e "CLI 状态 : ${RED}未安装${NC}"
   fi
-  if command -v openclaw >/dev/null 2>&1; then
-    echo -e "OpenClaw : ${GREEN}已安装${NC}"
-    openclaw gateway status >/dev/null 2>&1 && echo -e "Gateway  : ${GREEN}正常${NC}" || echo -e "Gateway  : ${YELLOW}异常${NC}"
-  else
-    echo -e "OpenClaw : ${RED}未安装${NC}"
-  fi
   echo "----------------------------------------"
 }
 
@@ -1277,10 +1282,10 @@ skillhub_menu() {
     echo -e "${GREEN}========================================${NC}"
     echo -e "      SkillHub 技能菜单"
     echo -e "${GREEN}========================================${NC}"
-    echo "说明: 先检查 OpenClaw，再安装 SkillHub CLI（仅 CLI），最后安装 adspower-browser。"
+    echo "说明: 按命令行方式安装 SkillHub CLI，再安装 adspower-browser 技能。"
     echo "----------------------------------------"
     echo "1. 一键安装 adspower-browser 技能"
-    echo "2. 检查 SkillHub / OpenClaw 状态"
+    echo "2. 检查 SkillHub 状态"
     echo "0. 返回主菜单"
     echo "----------------------------------------"
 
@@ -1665,7 +1670,17 @@ get_debian_ads_deps() {
     "$(resolve_debian_pkg_variant "libasound2" "libasound2t64")"
     "$(resolve_debian_pkg_variant "libcups2" "libcups2t64")"
   )
-  printf '%s\n' "${deps[@]}"
+  local filtered=()
+  local seen="|"
+  for p in "${deps[@]}"; do
+    p="$(trim "$p")"
+    [[ -z "$p" ]] && continue
+    if [[ "$seen" != *"|$p|"* ]]; then
+      filtered+=("$p")
+      seen="${seen}${p}|"
+    fi
+  done
+  printf '%s\n' "${filtered[@]}"
 }
 
 check_missing_debian_deps() {
@@ -1780,7 +1795,7 @@ install_runtime_deps() {
     if (( ${#missing[@]} > 0 )); then
       if [[ "$ask_confirm" == "1" ]]; then
         warn "检测到缺失依赖 (${#missing[@]} 个): ${missing[*]}"
-        if ! confirm_action "是否立即自动安装这些依赖？"; then
+        if ! confirm_action "是否立即自动安装这些依赖？" "1"; then
           warn "已取消自动安装依赖。"
           return 1
         fi
@@ -1809,7 +1824,7 @@ install_runtime_deps() {
     if (( ${#missing[@]} > 0 )); then
       if [[ "$ask_confirm" == "1" ]]; then
         warn "检测到缺失依赖 (${#missing[@]} 个): ${missing[*]}"
-        if ! confirm_action "是否立即自动安装这些依赖？"; then
+        if ! confirm_action "是否立即自动安装这些依赖？" "1"; then
           warn "已取消自动安装依赖。"
           return 1
         fi
@@ -1839,7 +1854,7 @@ install_or_fix_adspower() {
     fi
     info "检测到 AdsPower 已安装，执行启动检查..."
     save_config
-    start_adspower || true
+    start_adspower "1" || true
     return 0
   fi
 
@@ -1866,7 +1881,7 @@ install_or_fix_adspower() {
 
   install_adspower_from_deb "$deb_file" || return 1
   save_config
-  start_adspower || true
+  start_adspower "1" || true
   return 0
 }
 
