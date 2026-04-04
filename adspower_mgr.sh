@@ -942,9 +942,21 @@ patch_menu() {
   fi
   case "$o" in
     "") return ;;
-    1) patch_update_latest_api "stable" ;;
-    2) patch_update_latest_api "beta" ;;
-    3) patch_apply ;;
+    1)
+      if ! patch_update_latest_api "stable"; then
+        warn "稳定版补丁更新未完成，请处理提示后重试。"
+      fi
+      ;;
+    2)
+      if ! patch_update_latest_api "beta"; then
+        warn "预览版补丁更新未完成，请处理提示后重试。"
+      fi
+      ;;
+    3)
+      if ! patch_apply; then
+        warn "本地补丁应用未完成，请检查后重试。"
+      fi
+      ;;
     0) return ;;
     *) warn "无效选项: $o" ;;
   esac
