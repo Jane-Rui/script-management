@@ -184,46 +184,64 @@ require_cmd() {
 wait_for_apt_lock() {
   local timeout="${1:-$APT_LOCK_WAIT_SECONDS}"
   local waited=0
-  local locks=(
-    /var/lib/apt/lists/lock
-    /var/cache/apt/archives/lock
-    /var/lib/dpkg/lock-frontend
-    /var/lib/dpkg/lock
-  )
 
   while true; do
-    local locked=0
-    local lk
-    for lk in "${locks[@]}"; do
-      if [[ -e "$lk" ]] && command -v fuser >/dev/null 2>&1 && fuser "$lk" >/dev/null 2>&1; then
-        locked=1
-        break
-      fi
-    done
-
-    if (( locked == 0 )); then
+    # Detect package manager processes directly; more reliable than lock-file probing in WSL.
+    local holder
+    holder="$(ps -eo pid=,comm= | awk '$2 ~ /^(apt|apt-get|dpkg|unattended-upgrade)$/ {print $1\":\"$2}' | head -1)"
+    if [[ -z "$holder" ]]; then
       return 0
     fi
 
     if (( waited >= timeout )); then
-      error "等待 apt 锁超时（${timeout}s）。请稍后重试。"
+      error "等待 apt/dpkg 占用超时（${timeout}s）。当前占用: ${holder}"
       return 1
     fi
 
     if (( waited == 0 )); then
-      warn "检测到 apt 正在被其他进程占用，等待释放锁..."
+      warn "检测到 apt/dpkg 正在被其他进程占用（${holder}），等待释放..."
     fi
     sleep 3
     (( waited += 3 ))
   done
 }
 
+wait_on_lock_error() {
+  local apt_output="$1"
+  local timeout="${2:-$APT_LOCK_WAIT_SECONDS}"
+  local holder_pid=""
+  holder_pid="$(echo "$apt_output" | sed -n 's/.*held by process \([0-9]\+\).*/\1/p' | head -1)"
+
+  if [[ -n "$holder_pid" ]]; then
+    warn "检测到锁被进程 ${holder_pid} 占用，等待其退出..."
+    local waited=0
+    while kill -0 "$holder_pid" >/dev/null 2>&1; do
+      if (( waited >= timeout )); then
+        error "等待占用进程 ${holder_pid} 退出超时（${timeout}s）。"
+        return 1
+      fi
+      sleep 3
+      (( waited += 3 ))
+    done
+    return 0
+  fi
+
+  wait_for_apt_lock "$timeout"
+}
+
 apt_update_safe() {
   local i=1
+  local out=""
   while (( i <= APT_RETRIES )); do
     wait_for_apt_lock || return 1
-    if apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout="$APT_HTTP_TIMEOUT" -o Acquire::https::Timeout="$APT_HTTP_TIMEOUT" update; then
+    out="$(apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout="$APT_HTTP_TIMEOUT" -o Acquire::https::Timeout="$APT_HTTP_TIMEOUT" update 2>&1)" && {
+      echo "$out"
       return 0
+    }
+    echo "$out"
+    if echo "$out" | grep -qi "Could not get lock"; then
+      wait_on_lock_error "$out" "$APT_LOCK_WAIT_SECONDS" || return 1
+      continue
     fi
     warn "apt-get update 失败（第 ${i}/${APT_RETRIES} 次），准备重试..."
     ((i++))
@@ -236,10 +254,17 @@ apt_update_safe() {
 apt_install_safe() {
   local pkgs=("$@")
   local i=1
+  local out=""
   while (( i <= APT_RETRIES )); do
     wait_for_apt_lock || return 1
-    if apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout="$APT_HTTP_TIMEOUT" -o Acquire::https::Timeout="$APT_HTTP_TIMEOUT" install -y --no-install-recommends "${pkgs[@]}"; then
+    out="$(apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout="$APT_HTTP_TIMEOUT" -o Acquire::https::Timeout="$APT_HTTP_TIMEOUT" install -y --no-install-recommends "${pkgs[@]}" 2>&1)" && {
+      echo "$out"
       return 0
+    }
+    echo "$out"
+    if echo "$out" | grep -qi "Could not get lock"; then
+      wait_on_lock_error "$out" "$APT_LOCK_WAIT_SECONDS" || return 1
+      continue
     fi
     warn "apt-get install 失败（第 ${i}/${APT_RETRIES} 次），准备重试..."
     ((i++))
