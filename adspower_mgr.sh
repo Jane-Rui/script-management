@@ -1689,9 +1689,13 @@ check_missing_debian_deps() {
   local missing=()
   local p
   for p in "${deps[@]}"; do
+    p="$(trim "$p")"
+    [[ -z "$p" ]] && continue
     dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p")
   done
-  printf '%s\n' "${missing[@]}"
+  if (( ${#missing[@]} > 0 )); then
+    printf '%s\n' "${missing[@]}"
+  fi
 }
 
 get_rhel_major() {
@@ -1746,9 +1750,13 @@ check_missing_rhel_deps() {
   local missing=()
   local p
   for p in "${deps[@]}"; do
+    p="$(trim "$p")"
+    [[ -z "$p" ]] && continue
     rpm -q "$p" >/dev/null 2>&1 || missing+=("$p")
   done
-  printf '%s\n' "${missing[@]}"
+  if (( ${#missing[@]} > 0 )); then
+    printf '%s\n' "${missing[@]}"
+  fi
 }
 
 ensure_adspower_runtime_ready() {
@@ -1785,6 +1793,14 @@ install_runtime_deps() {
     info "检测到 Debian/Ubuntu，安装 AdsPower 运行依赖..."
     local missing=()
     mapfile -t missing < <(check_missing_debian_deps)
+    local clean_missing=()
+    local m
+    for m in "${missing[@]}"; do
+      m="$(trim "$m")"
+      [[ -z "$m" ]] && continue
+      clean_missing+=("$m")
+    done
+    missing=("${clean_missing[@]}")
     local tools=(iproute2 procps grep sed gawk)
     local t
     for t in "${tools[@]}"; do
@@ -1815,6 +1831,14 @@ install_runtime_deps() {
     command -v dnf >/dev/null 2>&1 || pkg_mgr="yum"
     local missing=()
     mapfile -t missing < <(check_missing_rhel_deps)
+    local clean_missing=()
+    local m
+    for m in "${missing[@]}"; do
+      m="$(trim "$m")"
+      [[ -z "$m" ]] && continue
+      clean_missing+=("$m")
+    done
+    missing=("${clean_missing[@]}")
     local tools=(iproute procps-ng grep sed gawk)
     local t
     for t in "${tools[@]}"; do
