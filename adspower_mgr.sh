@@ -10,8 +10,13 @@ YELLOW=$'\033[1;33m'
 CYAN=$'\033[0;36m'
 NC=$'\033[0m'
 
-SCRIPT_PATH="$(readlink -f "$0")"
+SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+if [[ "$SCRIPT_PATH" == /dev/fd/* || "$SCRIPT_PATH" == /proc/*/fd/* || "$SCRIPT_DIR" == /proc/* ]]; then
+  # For process substitution (bash <(curl ...)), avoid writing under ephemeral /proc paths.
+  SCRIPT_DIR="${PWD:-$HOME}"
+  SCRIPT_PATH="${SCRIPT_DIR}/adspower_mgr.sh"
+fi
 ADS_MGR_SHORTCUT_NAME="${ADS_MGR_SHORTCUT_NAME:-ads}"
 ADS_MGR_SHORTCUT_PATH="${ADS_MGR_SHORTCUT_PATH:-/usr/local/bin/${ADS_MGR_SHORTCUT_NAME}}"
 
