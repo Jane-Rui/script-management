@@ -76,6 +76,8 @@ success() { echo -e "${GREEN}[OK]${NC} $*"; }
 
 ensure_ads_shortcut() {
   local target="$SCRIPT_PATH"
+  local shortcut_path="$ADS_MGR_SHORTCUT_PATH"
+  local shortcut_dir
 
   # Skip shortcut creation for ephemeral paths (e.g. bash <(curl ...)).
   if [[ "$target" == /dev/fd/* || "$target" == /proc/*/fd/* ]]; then
@@ -83,18 +85,33 @@ ensure_ads_shortcut() {
   fi
   [[ -f "$target" ]] || return 0
 
-  mkdir -p "$(dirname "$ADS_MGR_SHORTCUT_PATH")"
+  # Guard against invalid runtime-injected paths (e.g. /proc/* from ephemeral shells).
+  if [[ -z "$shortcut_path" ]]; then
+    return 0
+  fi
+  if [[ "$shortcut_path" == /proc/* || "$shortcut_path" == /dev/fd/* ]]; then
+    warn "检测到临时路径环境，已跳过快捷命令创建: $shortcut_path"
+    return 0
+  fi
+
+  shortcut_dir="$(dirname "$shortcut_path")"
+  if [[ "$shortcut_dir" == /proc/* || "$shortcut_dir" == /dev/fd/* ]]; then
+    warn "检测到临时目录环境，已跳过快捷命令创建: $shortcut_dir"
+    return 0
+  fi
+
+  mkdir -p "$shortcut_dir"
   chmod +x "$target" 2>/dev/null || true
 
   local current_target=""
-  if [[ -e "$ADS_MGR_SHORTCUT_PATH" || -L "$ADS_MGR_SHORTCUT_PATH" ]]; then
-    current_target="$(readlink -f "$ADS_MGR_SHORTCUT_PATH" 2>/dev/null || true)"
+  if [[ -e "$shortcut_path" || -L "$shortcut_path" ]]; then
+    current_target="$(readlink -f "$shortcut_path" 2>/dev/null || true)"
     if [[ "$current_target" == "$target" ]]; then
       return 0
     fi
   fi
 
-  ln -sf "$target" "$ADS_MGR_SHORTCUT_PATH"
+  ln -sf "$target" "$shortcut_path"
   success "已启用快捷命令: ${ADS_MGR_SHORTCUT_NAME} -> ${target}"
 }
 
