@@ -31,6 +31,26 @@ chmod +x ./adspower_mgr.sh
 sudo ./adspower_mgr.sh
 ```
 
+## 快捷启动方式
+- 本地仓库启动（已 clone 到服务器）：
+
+```bash
+cd /path/to/script-management
+sudo bash ./adspower_mgr.sh
+```
+
+首次运行后会自动创建快捷命令（默认 `/usr/local/bin/ads`），后续可直接执行：
+
+```bash
+ads
+```
+
+- 远程一键启动（不落地文件，直接运行最新脚本）：
+
+```bash
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/Jane-Rui/script-management/main/adspower_mgr.sh)
+```
+
 ## 一键执行
 适用于服务器快速拉取并启动脚本（默认从 `main` 分支获取最新版本）：
 

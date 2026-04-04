@@ -12,6 +12,8 @@ NC=$'\033[0m'
 
 SCRIPT_PATH="$(readlink -f "$0")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+ADS_MGR_SHORTCUT_NAME="${ADS_MGR_SHORTCUT_NAME:-ads}"
+ADS_MGR_SHORTCUT_PATH="${ADS_MGR_SHORTCUT_PATH:-/usr/local/bin/${ADS_MGR_SHORTCUT_NAME}}"
 
 ADSPOWER_INSTALL_PREFIX="${ADSPOWER_INSTALL_PREFIX:-/opt}"
 ADSPOWER_EXEC="${ADSPOWER_EXEC:-${ADSPOWER_INSTALL_PREFIX}/AdsPower Global/adspower_global}"
@@ -71,6 +73,30 @@ info() { echo -e "${CYAN}[INFO]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; }
 success() { echo -e "${GREEN}[OK]${NC} $*"; }
+
+ensure_ads_shortcut() {
+  local target="$SCRIPT_PATH"
+
+  # Skip shortcut creation for ephemeral paths (e.g. bash <(curl ...)).
+  if [[ "$target" == /dev/fd/* || "$target" == /proc/*/fd/* ]]; then
+    return 0
+  fi
+  [[ -f "$target" ]] || return 0
+
+  mkdir -p "$(dirname "$ADS_MGR_SHORTCUT_PATH")"
+  chmod +x "$target" 2>/dev/null || true
+
+  local current_target=""
+  if [[ -e "$ADS_MGR_SHORTCUT_PATH" || -L "$ADS_MGR_SHORTCUT_PATH" ]]; then
+    current_target="$(readlink -f "$ADS_MGR_SHORTCUT_PATH" 2>/dev/null || true)"
+    if [[ "$current_target" == "$target" ]]; then
+      return 0
+    fi
+  fi
+
+  ln -sf "$target" "$ADS_MGR_SHORTCUT_PATH"
+  success "已启用快捷命令: ${ADS_MGR_SHORTCUT_NAME} -> ${target}"
+}
 
 pause_any_key() {
   # Non-interactive context: skip pause to avoid read failures under set -e.
@@ -1894,4 +1920,5 @@ main_menu() {
 }
 
 check_root
+ensure_ads_shortcut
 main_menu
