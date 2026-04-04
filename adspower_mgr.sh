@@ -530,7 +530,19 @@ wait_api_ready() {
 start_adspower() {
   load_config
   prompt_api_key_if_needed || return 1
-  ensure_adspower_runtime_ready || return 1
+  if ! ensure_adspower_runtime_ready; then
+    if [[ -t 0 && -t 1 ]]; then
+      if confirm_action "检测到运行依赖缺失，是否立即自动安装？"; then
+        install_runtime_deps "0" || return 1
+        ensure_adspower_runtime_ready || return 1
+      else
+        warn "已取消依赖安装，启动中止。"
+        return 1
+      fi
+    else
+      return 1
+    fi
+  fi
   auto_update_latest_patch_before_start
 
   if ! is_valid_port "$API_PORT"; then
@@ -1622,9 +1634,13 @@ resolve_debian_pkg_variant() {
       echo "$candidate"
       return 0
     fi
-    if command -v apt-cache >/dev/null 2>&1 && apt-cache show "$candidate" >/dev/null 2>&1; then
-      echo "$candidate"
-      return 0
+    if command -v apt-cache >/dev/null 2>&1; then
+      local cand_ver
+      cand_ver="$(apt-cache policy "$candidate" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
+      if [[ -n "$cand_ver" && "$cand_ver" != "(none)" ]]; then
+        echo "$candidate"
+        return 0
+      fi
     fi
   done
   echo "$preferred"
@@ -1632,11 +1648,23 @@ resolve_debian_pkg_variant() {
 }
 
 get_debian_ads_deps() {
-  local deps=("${DEBIAN_ADSPOWER_DEPS_BASE[@]}")
-  local asound_pkg cups_pkg
-  asound_pkg="$(resolve_debian_pkg_variant "libasound2" "libasound2t64")"
-  cups_pkg="$(resolve_debian_pkg_variant "libcups2" "libcups2t64")"
-  deps+=("$asound_pkg" "$cups_pkg")
+  local deps=()
+  local p
+  for p in "${DEBIAN_ADSPOWER_DEPS_BASE[@]}"; do
+    case "$p" in
+      libatk-bridge2.0-0|libatk1.0-0|libatspi2.0-0|libgtk-3-0) continue ;;
+      *) deps+=("$p") ;;
+    esac
+  done
+
+  deps+=(
+    "$(resolve_debian_pkg_variant "libatk-bridge2.0-0" "libatk-bridge2.0-0t64")"
+    "$(resolve_debian_pkg_variant "libatk1.0-0" "libatk1.0-0t64")"
+    "$(resolve_debian_pkg_variant "libatspi2.0-0" "libatspi2.0-0t64")"
+    "$(resolve_debian_pkg_variant "libgtk-3-0" "libgtk-3-0t64")"
+    "$(resolve_debian_pkg_variant "libasound2" "libasound2t64")"
+    "$(resolve_debian_pkg_variant "libcups2" "libcups2t64")"
+  )
   printf '%s\n' "${deps[@]}"
 }
 
@@ -1714,9 +1742,7 @@ ensure_adspower_runtime_ready() {
     mapfile -t missing < <(check_missing_debian_deps)
     if (( ${#missing[@]} > 0 )); then
       error "检测到 AdsPower 运行依赖缺失 (${#missing[@]} 个): ${missing[*]}"
-      warn "请先安装依赖后再启动 AdsPower。"
-      echo "推荐命令:"
-      print_debian_dep_install_cmd
+      warn "可选择由脚本自动安装依赖后继续。"
       return 1
     fi
     return 0
@@ -1727,13 +1753,7 @@ ensure_adspower_runtime_ready() {
     mapfile -t missing < <(check_missing_rhel_deps)
     if (( ${#missing[@]} > 0 )); then
       error "检测到 RHEL 运行依赖缺失 (${#missing[@]} 个): ${missing[*]}"
-      warn "请先安装依赖后再启动 AdsPower。"
-      local rhel_deps=()
-      mapfile -t rhel_deps < <(get_rhel_ads_deps)
-      local joined
-      joined="$(printf '%s ' "${rhel_deps[@]}")"
-      echo "推荐命令:"
-      echo "sudo dnf install -y ${joined}"
+      warn "可选择由脚本自动安装依赖后继续。"
       return 1
     fi
     return 0
@@ -1744,6 +1764,8 @@ ensure_adspower_runtime_ready() {
 }
 
 install_runtime_deps() {
+  local ask_confirm="${1:-1}"
+
   if is_debian_like; then
     info "检测到 Debian/Ubuntu，安装 AdsPower 运行依赖..."
     local missing=()
@@ -1756,6 +1778,13 @@ install_runtime_deps() {
 
     apt-get update
     if (( ${#missing[@]} > 0 )); then
+      if [[ "$ask_confirm" == "1" ]]; then
+        warn "检测到缺失依赖 (${#missing[@]} 个): ${missing[*]}"
+        if ! confirm_action "是否立即自动安装这些依赖？"; then
+          warn "已取消自动安装依赖。"
+          return 1
+        fi
+      fi
       info "将安装缺失包 (${#missing[@]} 个): ${missing[*]}"
       apt-get install -y --no-install-recommends "${missing[@]}"
     else
@@ -1778,6 +1807,13 @@ install_runtime_deps() {
     done
 
     if (( ${#missing[@]} > 0 )); then
+      if [[ "$ask_confirm" == "1" ]]; then
+        warn "检测到缺失依赖 (${#missing[@]} 个): ${missing[*]}"
+        if ! confirm_action "是否立即自动安装这些依赖？"; then
+          warn "已取消自动安装依赖。"
+          return 1
+        fi
+      fi
       info "将安装缺失包 (${#missing[@]} 个): ${missing[*]}"
       "$pkg_mgr" install -y "${missing[@]}"
     else
