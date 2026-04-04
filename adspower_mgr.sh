@@ -839,23 +839,48 @@ patch_update_latest_api() {
     return 1
   fi
 
-  local url payload res code msg
-  url="http://127.0.0.1:${API_PORT}/api/v2/browser-profile/update-patch"
+  local url payload res body http_code code msg
+  url="http://127.0.0.1:${API_PORT}/api/v2/browser-profile/update-patch?version_type=${version_type}"
   payload="{\"version_type\":\"${version_type}\"}"
 
   info "正在调用官方补丁更新接口（${version_type}）..."
   res="$(curl -sS --max-time 30 --location -g "$url" \
     --header "Authorization: Bearer $API_KEY" \
     --header "Content-Type: application/json" \
-    --data "$payload" 2>/dev/null || true)"
+    --data "$payload" \
+    --write-out $'\n__HTTP_CODE__:%{http_code}' 2>/dev/null || true)"
 
   if [[ -z "$res" ]]; then
     error "接口无响应: $url"
     return 1
   fi
 
-  code="$(echo "$res" | grep -o '"code":[0-9-]*' | head -1 | cut -d':' -f2 || true)"
-  msg="$(echo "$res" | sed -n 's/.*"msg":"\([^"]*\)".*/\1/p' | head -1 || true)"
+  http_code="$(echo "$res" | sed -n 's/.*__HTTP_CODE__:\([0-9][0-9][0-9]\).*/\1/p' | tail -1)"
+  body="$(echo "$res" | sed '/__HTTP_CODE__:/d')"
+  [[ -z "$body" ]] && body="$res"
+
+  if command -v jq >/dev/null 2>&1 && echo "$body" | jq -e . >/dev/null 2>&1; then
+    code="$(echo "$body" | jq -r '.code // empty' 2>/dev/null || true)"
+    msg="$(echo "$body" | jq -r '.msg // empty' 2>/dev/null || true)"
+  else
+    code="$(echo "$body" | sed -n 's/.*"code"[[:space:]]*:[[:space:]]*\(-\?[0-9]\+\).*/\1/p' | head -1 || true)"
+    msg="$(echo "$body" | sed -n 's/.*"msg"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || true)"
+  fi
+
+  code="$(trim "${code:-}")"
+  msg="$(trim "${msg:-}")"
+  if [[ -z "$code" ]]; then
+    code="$(echo "$body" | sed -nE 's/.*"code"[[:space:]]*:[[:space:]]*"?(-?[0-9]+)"?.*/\1/p' | head -1 || true)"
+    code="$(trim "${code:-}")"
+  fi
+  if [[ -z "$msg" ]]; then
+    msg="$(echo "$body" | sed -nE 's/.*"msg"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -1 || true)"
+    msg="$(trim "${msg:-}")"
+  fi
+  if [[ -z "$code" && "$body" == *"success"* ]]; then
+    code="0"
+    [[ -z "$msg" ]] && msg="success"
+  fi
   [[ -z "$msg" ]] && msg="unknown"
 
   if [[ "$code" == "0" ]]; then
@@ -864,7 +889,12 @@ patch_update_latest_api() {
     return 0
   fi
 
-  error "补丁更新失败（${version_type}）：${msg}"
+  error "补丁更新失败（${version_type}）：${msg} (http=${http_code:-unknown}, code=${code:-unknown})"
+  if [[ -n "$body" ]]; then
+    local body_short
+    body_short="$(echo "$body" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g' | cut -c1-260)"
+    warn "接口返回摘要: ${body_short}"
+  fi
   if [[ "$msg" == *"open"* || "$msg" == *"opened"* || "$msg" == *"running"* ]]; then
     warn "请先关闭所有已打开环境，再执行补丁更新。"
   fi
@@ -954,6 +984,8 @@ patch_apply() {
 patch_menu() {
   clear
   echo -e "${GREEN}补丁管理 v5.0${NC}"
+  echo -e "当前已安装补丁 : $(get_patch_info)"
+  echo "----------------------------------------"
   echo "1. 更新到稳定版补丁（stable，推荐）"
   echo "2. 更新到预览版补丁（beta）"
   echo "3. 应用本地补丁 (需重启)"
@@ -2004,10 +2036,20 @@ main_menu() {
 
     local choice
     if ! read -r -p "请输入选项: " choice; then
+      if [[ ! -t 0 ]]; then
+        info "检测到非交互输入结束，脚本退出。"
+        exit 0
+      fi
       choice=""
     fi
     case "$choice" in
-      "") continue ;;
+      "")
+        if [[ ! -t 0 ]]; then
+          info "检测到非交互空输入，脚本退出。"
+          exit 0
+        fi
+        continue
+        ;;
       1) install_or_fix_adspower ;;
       2) start_adspower ;;
       3) stop_adspower ;;

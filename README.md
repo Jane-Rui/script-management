@@ -16,7 +16,7 @@
 - 自动创建命令软链接：`/usr/local/bin/adspower_global`
 - 安装阶段支持同步更新 `main.min.js`（可开关）
 - OpenClaw 上游菜单融合（通过 Kejilion 最新脚本实时进入）
-- SkillHub 技能菜单（先检查 OpenClaw，再按 CLI-only 安装 SkillHub，并安装 `adspower-browser`）
+- SkillHub 技能菜单（通过官方命令安装 SkillHub CLI，并安装 `adspower-browser`）
 - OpenCode 菜单：安装 OpenCode CLI，并设置“非删除操作默认放行、删除类命令需确认”授权策略
 
 ## 运行要求
