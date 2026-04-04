@@ -47,6 +47,9 @@ PATCH_AUTO_UPDATE_ON_START="${PATCH_AUTO_UPDATE_ON_START:-1}"
 PATCH_DOWNLOAD_TIMEOUT="${PATCH_DOWNLOAD_TIMEOUT:-20}"
 PATCH_DOWNLOAD_RETRIES="${PATCH_DOWNLOAD_RETRIES:-2}"
 PATCH_RETRY_DELAY="${PATCH_RETRY_DELAY:-2}"
+APT_LOCK_WAIT_SECONDS="${APT_LOCK_WAIT_SECONDS:-180}"
+APT_RETRIES="${APT_RETRIES:-2}"
+APT_HTTP_TIMEOUT="${APT_HTTP_TIMEOUT:-20}"
 
 if [[ -d "/root/.config/adspower_global/cwd_global" ]]; then
   KERNEL_ROOT="${ADSPOWER_KERNEL_ROOT:-/root/.config/adspower_global/cwd_global}"
@@ -176,6 +179,74 @@ require_cmd() {
     error "缺少命令: $cmd"
     return 1
   }
+}
+
+wait_for_apt_lock() {
+  local timeout="${1:-$APT_LOCK_WAIT_SECONDS}"
+  local waited=0
+  local locks=(
+    /var/lib/apt/lists/lock
+    /var/cache/apt/archives/lock
+    /var/lib/dpkg/lock-frontend
+    /var/lib/dpkg/lock
+  )
+
+  while true; do
+    local locked=0
+    local lk
+    for lk in "${locks[@]}"; do
+      if [[ -e "$lk" ]] && command -v fuser >/dev/null 2>&1 && fuser "$lk" >/dev/null 2>&1; then
+        locked=1
+        break
+      fi
+    done
+
+    if (( locked == 0 )); then
+      return 0
+    fi
+
+    if (( waited >= timeout )); then
+      error "等待 apt 锁超时（${timeout}s）。请稍后重试。"
+      return 1
+    fi
+
+    if (( waited == 0 )); then
+      warn "检测到 apt 正在被其他进程占用，等待释放锁..."
+    fi
+    sleep 3
+    (( waited += 3 ))
+  done
+}
+
+apt_update_safe() {
+  local i=1
+  while (( i <= APT_RETRIES )); do
+    wait_for_apt_lock || return 1
+    if apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout="$APT_HTTP_TIMEOUT" -o Acquire::https::Timeout="$APT_HTTP_TIMEOUT" update; then
+      return 0
+    fi
+    warn "apt-get update 失败（第 ${i}/${APT_RETRIES} 次），准备重试..."
+    ((i++))
+    sleep 2
+  done
+  error "apt-get update 多次失败，请检查网络或镜像源后重试。"
+  return 1
+}
+
+apt_install_safe() {
+  local pkgs=("$@")
+  local i=1
+  while (( i <= APT_RETRIES )); do
+    wait_for_apt_lock || return 1
+    if apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout="$APT_HTTP_TIMEOUT" -o Acquire::https::Timeout="$APT_HTTP_TIMEOUT" install -y --no-install-recommends "${pkgs[@]}"; then
+      return 0
+    fi
+    warn "apt-get install 失败（第 ${i}/${APT_RETRIES} 次），准备重试..."
+    ((i++))
+    sleep 2
+  done
+  error "apt-get install 多次失败，请检查网络或镜像源后重试。"
+  return 1
 }
 
 download_to_file() {
@@ -1839,7 +1910,7 @@ install_runtime_deps() {
       dpkg -s "$t" >/dev/null 2>&1 || missing+=("$t")
     done
 
-    apt-get update
+    apt_update_safe || return 1
     if (( ${#missing[@]} > 0 )); then
       if [[ "$ask_confirm" == "1" ]]; then
         warn "检测到缺失依赖 (${#missing[@]} 个): ${missing[*]}"
@@ -1849,7 +1920,7 @@ install_runtime_deps() {
         fi
       fi
       info "将安装缺失包 (${#missing[@]} 个): ${missing[*]}"
-      apt-get install -y --no-install-recommends "${missing[@]}"
+      apt_install_safe "${missing[@]}" || return 1
     else
       info "依赖已齐全，跳过安装。"
     fi
