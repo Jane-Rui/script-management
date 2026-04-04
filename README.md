@@ -52,16 +52,16 @@ sudo bash <(curl -fsSL https://raw.githubusercontent.com/Jane-Rui/script-managem
 ```
 
 ## 一键执行
-适用于服务器快速拉取并启动脚本（默认从 `main` 分支获取最新版本）：
+适用于服务器快速拉取并启动脚本（默认从 `main` 分支获取最新版本，下载到当前目录）：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Jane-Rui/script-management/main/adspower_mgr.sh)
+curl -fsSL https://raw.githubusercontent.com/Jane-Rui/script-management/main/adspower_mgr.sh -o ./adspower_mgr.sh && bash ./adspower_mgr.sh
 ```
 
 如服务器未安装 `curl`，可使用：
 
 ```bash
-bash <(wget -qO- https://raw.githubusercontent.com/Jane-Rui/script-management/main/adspower_mgr.sh)
+wget -qO ./adspower_mgr.sh https://raw.githubusercontent.com/Jane-Rui/script-management/main/adspower_mgr.sh && bash ./adspower_mgr.sh
 ```
 
 ## 配置说明
