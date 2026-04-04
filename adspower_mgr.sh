@@ -661,49 +661,53 @@ kernel_menu() {
     return
   fi
 
-  clear
-  echo -e "${GREEN}========================================${NC}"
-  echo -e "      AdsPower 内核管理 v5.0"
-  echo -e "${GREEN}========================================${NC}"
-  echo -e "内核根目录: ${CYAN}${KERNEL_ROOT}${NC}"
-  echo "----------------------------------------"
+  while true; do
+    clear
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "      AdsPower 内核管理 v5.0"
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "内核根目录: ${CYAN}${KERNEL_ROOT}${NC}"
+    echo "----------------------------------------"
 
-  local vs=("145" "144" "143" "142" "141" "140" "139" "138" "137" "136")
-  local i
-  for i in "${!vs[@]}"; do
-    echo -e "$((i + 1)). 下载 Chrome ${YELLOW}${vs[$i]}${NC} $(check_kernel_installed "${vs[$i]}")"
-  done
+    local vs=("145" "144" "143" "142" "141" "140" "139" "138" "137" "136")
+    local i
+    for i in "${!vs[@]}"; do
+      echo -e "$((i + 1)). 下载 Chrome ${YELLOW}${vs[$i]}${NC} $(check_kernel_installed "${vs[$i]}")"
+    done
 
-  echo "11. 自定义版本号"
-  echo "0. 返回主菜单"
-  echo "----------------------------------------"
+    echo "11. 自定义版本号"
+    echo "0. 返回主菜单"
+    echo "----------------------------------------"
 
-  local k_in
-  if ! read -r -p "请输入选项 (支持多选 1,2): " k_in; then
-    k_in=""
-  fi
-  [[ -z "$k_in" || "$k_in" == "0" ]] && return
-
-  local sels
-  sels="$(echo "$k_in" | tr ',' ' ')"
-  for opt in $sels; do
-    if ! is_number "$opt"; then
-      warn "忽略无效选项: $opt"
-      continue
+    local k_in
+    if ! read -r -p "请输入选项 (支持多选 1,2): " k_in; then
+      k_in=""
     fi
+    [[ -z "$k_in" || "$k_in" == "0" ]] && return
 
-    if (( opt >= 1 && opt <= 10 )); then
-      download_kernel_api "${vs[$((opt - 1))]}"
-    elif (( opt == 11 )); then
-      local cv
-      if ! read -r -p "版本号: " cv; then
-        cv=""
+    local sels
+    sels="$(echo "$k_in" | tr ',' ' ')"
+    for opt in $sels; do
+      if ! is_number "$opt"; then
+        warn "忽略无效选项: $opt"
+        continue
       fi
-      cv="$(trim "$cv")"
-      [[ -n "$cv" ]] && download_kernel_api "$cv" || warn "版本号为空，已跳过。"
-    else
-      warn "超出范围的选项: $opt"
-    fi
+
+      if (( opt >= 1 && opt <= 10 )); then
+        download_kernel_api "${vs[$((opt - 1))]}"
+      elif (( opt == 11 )); then
+        local cv
+        if ! read -r -p "版本号: " cv; then
+          cv=""
+        fi
+        cv="$(trim "$cv")"
+        [[ -n "$cv" ]] && download_kernel_api "$cv" || warn "版本号为空，已跳过。"
+      else
+        warn "超出范围的选项: $opt"
+      fi
+    done
+
+    pause_any_key
   done
 }
 
@@ -741,6 +745,58 @@ patch_add_url() {
   else
     warn "已添加补丁记录，但下载失败。可稍后重试应用。"
   fi
+}
+
+patch_update_latest_api() {
+  local version_type="${1:-stable}"
+  load_config
+  prompt_api_key_if_needed || return 1
+
+  if ! is_valid_port "$API_PORT"; then
+    error "API 端口非法: $API_PORT"
+    return 1
+  fi
+
+  if [[ "$version_type" != "stable" && "$version_type" != "beta" ]]; then
+    error "版本类型非法: $version_type（仅支持 stable 或 beta）"
+    return 1
+  fi
+
+  if ! is_adspower_running; then
+    error "AdsPower 服务未运行，无法调用补丁更新接口。请先启动服务。"
+    return 1
+  fi
+
+  local url payload res code msg
+  url="http://127.0.0.1:${API_PORT}/api/v2/browser-profile/update-patch"
+  payload="{\"version_type\":\"${version_type}\"}"
+
+  info "正在调用官方补丁更新接口（${version_type}）..."
+  res="$(curl -sS --max-time 30 --location -g "$url" \
+    --header "Authorization: Bearer $API_KEY" \
+    --header "Content-Type: application/json" \
+    --data "$payload" 2>/dev/null || true)"
+
+  if [[ -z "$res" ]]; then
+    error "接口无响应: $url"
+    return 1
+  fi
+
+  code="$(echo "$res" | grep -o '"code":[0-9-]*' | head -1 | cut -d':' -f2 || true)"
+  msg="$(echo "$res" | sed -n 's/.*"msg":"\([^"]*\)".*/\1/p' | head -1 || true)"
+  [[ -z "$msg" ]] && msg="unknown"
+
+  if [[ "$code" == "0" ]]; then
+    success "补丁更新任务提交成功（${version_type}）：${msg}"
+    info "若当前有打开中的环境，服务端可能拒绝更新，请先关闭全部环境后重试。"
+    return 0
+  fi
+
+  error "补丁更新失败（${version_type}）：${msg}"
+  if [[ "$msg" == *"open"* || "$msg" == *"opened"* || "$msg" == *"running"* ]]; then
+    warn "请先关闭所有已打开环境，再执行补丁更新。"
+  fi
+  return 1
 }
 
 patch_apply() {
@@ -826,8 +882,10 @@ patch_apply() {
 patch_menu() {
   clear
   echo -e "${GREEN}补丁管理 v5.0${NC}"
-  echo "1. 添加补丁链接"
-  echo "2. 应用补丁 (需重启)"
+  echo "1. 更新到稳定版补丁（stable，推荐）"
+  echo "2. 更新到预览版补丁（beta）"
+  echo "3. 应用本地补丁 (需重启)"
+  echo "说明: stable 稳定性更高；beta 功能更新但可能不稳定。"
   echo "0. 返回主菜单"
 
   local o
@@ -836,8 +894,9 @@ patch_menu() {
   fi
   case "$o" in
     "") return ;;
-    1) patch_add_url ;;
-    2) patch_apply ;;
+    1) patch_update_latest_api "stable" ;;
+    2) patch_update_latest_api "beta" ;;
+    3) patch_apply ;;
     0) return ;;
     *) warn "无效选项: $o" ;;
   esac

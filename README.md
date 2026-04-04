@@ -9,7 +9,7 @@
 - 启动、停止、重启 AdsPower 服务
 - 查看 API 状态与运行信息（摘要展示，不回显原始接口参数）
 - 开机自启（systemd）开关
-- 补丁管理（添加补丁地址、应用补丁、失败回滚）
+- 补丁管理（官方 API 更新最新补丁：stable/beta；本地补丁应用与失败回滚）
 - Chrome 内核下载菜单
 - 环境安装/修复（跨 Debian/RHEL，仅安装缺失依赖）
 - 支持本地 `.deb` 或自动下载安装 AdsPower
@@ -29,6 +29,19 @@
 ```bash
 chmod +x ./adspower_mgr.sh
 sudo ./adspower_mgr.sh
+```
+
+## 一键执行
+适用于服务器快速拉取并启动脚本（默认从 `main` 分支获取最新版本）：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Jane-Rui/script-management/main/adspower_mgr.sh)
+```
+
+如服务器未安装 `curl`，可使用：
+
+```bash
+bash <(wget -qO- https://raw.githubusercontent.com/Jane-Rui/script-management/main/adspower_mgr.sh)
 ```
 
 ## 配置说明
