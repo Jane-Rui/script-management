@@ -188,7 +188,7 @@ wait_for_apt_lock() {
   while true; do
     # Detect package manager processes directly; more reliable than lock-file probing in WSL.
     local holder
-    holder="$(ps -eo pid=,comm= | awk '$2 ~ /^(apt|apt-get|dpkg|unattended-upgrade)$/ {print $1\":\"$2}' | head -1)"
+    holder="$(ps -eo pid=,comm= | grep -E '^[[:space:]]*[0-9]+[[:space:]]+(apt|apt-get|dpkg|unattended-upgrade)$' | sed -n '1{s/^[[:space:]]*//;s/[[:space:]]\\+/:/;p;}')"
     if [[ -z "$holder" ]]; then
       return 0
     fi
