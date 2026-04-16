@@ -5,19 +5,23 @@
 ## 内容
 - `adspower_mgr.sh`: AdsPower 管理主脚本（单文件 Bash）
 
-## 功能
+## 菜单功能
+- 安装/修复 AdsPower
 - 启动、停止、重启 AdsPower 服务
-- 查看 API 状态与运行信息（摘要展示，不回显原始接口参数）
-- 开机自启（systemd）开关
+- 检查 API 详情
+- 切换开机自启（systemd）
+- 更换 API Key
 - 补丁管理（显示当前补丁；官方 API 更新 stable/beta；本地补丁应用与失败回滚）
 - Chrome 内核下载菜单
-- 环境安装/修复（跨 Debian/RHEL，仅安装缺失依赖；支持 apt 锁等待与重试）
+- OpenClaw 上游菜单融合（通过 Kejilion 最新脚本实时进入）
+- OpenCode 安装与授权
+
+## 内置行为
+- 环境安装/修复支持 Debian/RHEL，仅安装缺失依赖，并带 apt 锁等待与重试
 - 支持本地 `.deb` 或自动下载安装 AdsPower
 - 自动创建命令软链接：`/usr/local/bin/adspower_global`
+- 首次运行后自动创建快捷命令：`ads`
 - 安装阶段支持同步更新 `main.min.js`（可开关）
-- OpenClaw 上游菜单融合（通过 Kejilion 最新脚本实时进入）
-- SkillHub 技能菜单（通过官方命令安装 SkillHub CLI，并安装 `adspower-browser`）
-- OpenCode 菜单：安装 OpenCode CLI，并设置“非删除操作默认放行、删除类命令需确认”授权策略
 
 ## 运行要求
 - Linux 环境
@@ -84,8 +88,6 @@ API_PORT=50325
 - `ADSPOWER_MAIN_MIN_JS_URL`
 - `ADSPOWER_MAIN_MIN_JS_DEST`
 - `ADSPOWER_SYNC_MAIN_MIN_JS_ON_INSTALL`
-- `SKILLHUB_INSTALL_SCRIPT_URL`
-- `SKILLHUB_DEFAULT_SKILL`
 - `OPENCODE_INSTALL_URL`
 - `OPENCODE_CONFIG_DIR`
 - `OPENCODE_CONFIG_FILE`
