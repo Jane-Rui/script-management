@@ -9,9 +9,9 @@
 - 启动、停止、重启 AdsPower 服务
 - 查看 API 状态与运行信息（摘要展示，不回显原始接口参数）
 - 开机自启（systemd）开关
-- 补丁管理（官方 API 更新最新补丁：stable/beta；本地补丁应用与失败回滚）
+- 补丁管理（显示当前补丁；官方 API 更新 stable/beta；本地补丁应用与失败回滚）
 - Chrome 内核下载菜单
-- 环境安装/修复（跨 Debian/RHEL，仅安装缺失依赖）
+- 环境安装/修复（跨 Debian/RHEL，仅安装缺失依赖；支持 apt 锁等待与重试）
 - 支持本地 `.deb` 或自动下载安装 AdsPower
 - 自动创建命令软链接：`/usr/local/bin/adspower_global`
 - 安装阶段支持同步更新 `main.min.js`（可开关）
@@ -48,7 +48,7 @@ ads
 - 远程一键启动（不落地文件，直接运行最新脚本）：
 
 ```bash
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/Jane-Rui/script-management/main/adspower_mgr.sh)
+curl -fsSL https://raw.githubusercontent.com/Jane-Rui/script-management/main/adspower_mgr.sh -o ./adspower_mgr.sh && bash ./adspower_mgr.sh
 ```
 
 ## 一键执行
@@ -90,6 +90,9 @@ API_PORT=50325
 - `OPENCODE_CONFIG_DIR`
 - `OPENCODE_CONFIG_FILE`
 - `OPENCODE_BIN_LINK`
+- `APT_LOCK_WAIT_SECONDS`
+- `APT_RETRIES`
+- `APT_HTTP_TIMEOUT`
 
 ## 常见排障
 - 启动后 API 不在线：
@@ -102,8 +105,13 @@ API_PORT=50325
 2. 确认 `ADSPOWER_EXEC` 路径是否存在且可执行。
 
 - 补丁应用失败：
-1. 检查补丁地址可访问性。
-2. 检查目标文件路径和权限（`TARGET_JS`）。
+1. 使用官方补丁 API 时需确保 AdsPower 服务已启动。
+2. 若返回 `404 Not Found`，请先确认本机 AdsPower 版本与接口可用性。
+3. 本地补丁应用失败时检查目标文件路径和权限（`TARGET_JS`）。
+
+- 安装依赖时卡在 apt 锁：
+1. 脚本会自动等待锁释放（默认 180 秒）并重试。
+2. 可通过环境变量调节：`APT_LOCK_WAIT_SECONDS`、`APT_RETRIES`、`APT_HTTP_TIMEOUT`。
 
 - OpenClaw 菜单无法进入：
 1. 检查服务器外网访问和 DNS。
