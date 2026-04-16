@@ -37,8 +37,6 @@ ADSPOWER_MAIN_MIN_JS_URL="${ADSPOWER_MAIN_MIN_JS_URL:-https://version.adspower.n
 ADSPOWER_MAIN_MIN_JS_DEST="${ADSPOWER_MAIN_MIN_JS_DEST:-${ADSPOWER_INSTALL_PREFIX}/AdsPower Global/adspower_global/cwd_global/lib/main.min.js}"
 ADSPOWER_SYNC_MAIN_MIN_JS_ON_INSTALL="${ADSPOWER_SYNC_MAIN_MIN_JS_ON_INSTALL:-1}"
 KEJILION_BOOTSTRAP_URL="${KEJILION_BOOTSTRAP_URL:-https://kejilion.sh}"
-SKILLHUB_INSTALL_SCRIPT_URL="${SKILLHUB_INSTALL_SCRIPT_URL:-https://skillhub.cn/install/install.sh}"
-SKILLHUB_DEFAULT_SKILL="${SKILLHUB_DEFAULT_SKILL:-adspower-browser}"
 OPENCODE_INSTALL_URL="${OPENCODE_INSTALL_URL:-https://opencode.ai/install}"
 OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
 OPENCODE_CONFIG_FILE="${OPENCODE_CONFIG_FILE:-$OPENCODE_CONFIG_DIR/opencode.json}"
@@ -431,6 +429,38 @@ get_api_raw_status() {
   curl -s --max-time 2 "http://127.0.0.1:${API_PORT}/status" 2>/dev/null || true
 }
 
+get_latest_adspower_runtime_log() {
+  local roots=(
+    "$HOME/.config/adspower_global/cwd_global/log"
+    "/root/.config/adspower_global/cwd_global/log"
+  )
+  local root
+  for root in "${roots[@]}"; do
+    if [[ -d "$root" ]]; then
+      find "$root" -maxdepth 1 -type f -name '*.log' 2>/dev/null | sort | tail -1
+      return 0
+    fi
+  done
+  return 1
+}
+
+detect_adspower_auth_error() {
+  local files=("/tmp/adspower_mgr_start.log")
+  local runtime_log=""
+  runtime_log="$(get_latest_adspower_runtime_log 2>/dev/null || true)"
+  [[ -n "$runtime_log" ]] && files+=("$runtime_log")
+
+  local f
+  for f in "${files[@]}"; do
+    [[ -f "$f" ]] || continue
+    if grep -Eqi 'ERROR - 4007|Expired, please recharge|expired' "$f" 2>/dev/null; then
+      echo "授权异常：当前 AdsPower Key 无效、已过期或账号不可用"
+      return 0
+    fi
+  done
+  return 1
+}
+
 load_config() {
   API_KEY=""
   API_PORT=50325
@@ -489,6 +519,8 @@ get_api_status() {
   res="$(get_api_raw_status)"
   if [[ "$res" == *"success"* ]]; then
     echo -e "${GREEN}在线${NC}"
+  elif detect_adspower_auth_error >/dev/null 2>&1; then
+    echo -e "${RED}授权异常${NC}"
   elif is_port_listening "$API_PORT"; then
     echo -e "${YELLOW}端口在线/API异常${NC}"
   else
@@ -676,6 +708,13 @@ start_adspower() {
       success "API 已在线，无需重复启动。"
       return 0
     fi
+    local auth_error=""
+    auth_error="$(detect_adspower_auth_error 2>/dev/null || true)"
+    if [[ -n "$auth_error" ]]; then
+      error "$auth_error"
+      warn "请更换有效 Key，或确认账号当前可正常使用。"
+      return 1
+    fi
     if is_port_listening "$API_PORT"; then
       warn "检测到端口已监听但 API 仍未就绪，额外等待 15 秒..."
       if wait_api_ready 15; then
@@ -694,6 +733,15 @@ start_adspower() {
   if wait_api_ready 20; then
     success "AdsPower 启动成功，API 在线: 127.0.0.1:$API_PORT"
     return 0
+  fi
+
+  local auth_error=""
+  auth_error="$(detect_adspower_auth_error 2>/dev/null || true)"
+  if [[ -n "$auth_error" ]]; then
+    error "$auth_error"
+    warn "请更换有效 Key，或确认 AdsPower 账号状态正常后重试。"
+    tail -n 20 /tmp/adspower_mgr_start.log 2>/dev/null || true
+    return 1
   fi
 
   error "启动超时，API 未就绪。日志: /tmp/adspower_mgr_start.log"
@@ -1308,142 +1356,6 @@ check_openclaw_ready() {
   return 0
 }
 
-find_skillhub_binary() {
-  if command -v skillhub >/dev/null 2>&1; then
-    command -v skillhub
-    return 0
-  fi
-
-  local candidates=(
-    "$HOME/.local/bin/skillhub"
-    "/root/.local/bin/skillhub"
-    "/usr/local/bin/skillhub"
-  )
-  local p
-  for p in "${candidates[@]}"; do
-    if [[ -x "$p" ]]; then
-      echo "$p"
-      return 0
-    fi
-  done
-  return 1
-}
-
-is_skillhub_installed() {
-  find_skillhub_binary >/dev/null 2>&1
-}
-
-ensure_skillhub_link() {
-  local bin_path
-  bin_path="$(find_skillhub_binary)" || return 1
-
-  if command -v skillhub >/dev/null 2>&1; then
-    return 0
-  fi
-
-  ln -sf "$bin_path" /usr/local/bin/skillhub
-  info "已创建 SkillHub 命令软链接: /usr/local/bin/skillhub -> ${bin_path}"
-}
-
-install_skillhub_cli_if_needed() {
-  if is_skillhub_installed; then
-    success "已检测到 SkillHub CLI。"
-    ensure_skillhub_link || true
-    return 0
-  fi
-
-  require_cmd bash || return 1
-  require_cmd curl || return 1
-  info "未检测到 SkillHub CLI，开始安装并设为优先技能安装源..."
-
-  if ! bash -c "curl -fsSL \"$SKILLHUB_INSTALL_SCRIPT_URL\" | bash"; then
-    error "SkillHub CLI 安装失败。"
-    return 1
-  fi
-
-  ensure_skillhub_link || true
-  if ! is_skillhub_installed; then
-    error "SkillHub CLI 安装后仍不可用。"
-    return 1
-  fi
-
-  success "SkillHub CLI 安装完成。"
-  return 0
-}
-
-install_adspower_browser_skill() {
-  local skillhub_bin
-  install_skillhub_cli_if_needed || return 1
-  skillhub_bin="$(find_skillhub_binary)" || {
-    error "未找到 SkillHub CLI 可执行文件。"
-    return 1
-  }
-
-  info "开始安装 Skill: ${SKILLHUB_DEFAULT_SKILL}"
-  if (cd "$SCRIPT_DIR" && "$skillhub_bin" install "$SKILLHUB_DEFAULT_SKILL"); then
-    success "Skill 安装成功: ${SKILLHUB_DEFAULT_SKILL}"
-    return 0
-  fi
-
-  error "Skill 安装失败: ${SKILLHUB_DEFAULT_SKILL}"
-  return 1
-}
-
-show_skillhub_status() {
-  echo ""
-  echo "SkillHub 状态"
-  echo "----------------------------------------"
-  if is_skillhub_installed; then
-    local skillhub_bin
-    skillhub_bin="$(find_skillhub_binary)"
-    echo -e "CLI 状态 : ${GREEN}已安装${NC}"
-    echo "CLI 路径 : ${skillhub_bin}"
-    echo -n "CLI 版本 : "
-    "$skillhub_bin" --version 2>/dev/null || echo "无法读取"
-  else
-    echo -e "CLI 状态 : ${RED}未安装${NC}"
-  fi
-  echo "----------------------------------------"
-}
-
-skillhub_menu() {
-  while true; do
-    clear
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "      SkillHub 技能菜单"
-    echo -e "${GREEN}========================================${NC}"
-    echo "说明: 按命令行方式安装 SkillHub CLI，再安装 adspower-browser 技能。"
-    echo "----------------------------------------"
-    echo "1. 一键安装 adspower-browser 技能"
-    echo "2. 检查 SkillHub 状态"
-    echo "0. 返回主菜单"
-    echo "----------------------------------------"
-
-    local s_choice
-    if ! read -r -p "请输入选项: " s_choice; then
-      s_choice=""
-    fi
-    case "$s_choice" in
-      "") return ;;
-      1)
-        install_adspower_browser_skill
-        pause_any_key
-        ;;
-      2)
-        show_skillhub_status
-        pause_any_key
-        ;;
-      0)
-        return
-        ;;
-      *)
-        warn "无效选项: $s_choice"
-        pause_any_key
-        ;;
-    esac
-  done
-}
-
 find_opencode_binary() {
   if command -v opencode >/dev/null 2>&1; then
     command -v opencode
@@ -2039,6 +1951,65 @@ install_or_fix_adspower() {
   return 0
 }
 
+uninstall_adspower() {
+  load_config
+
+  if ! confirm_action "将停止并卸载 AdsPower 服务、安装目录和运行数据，是否继续？"; then
+    info "已取消卸载。"
+    return 0
+  fi
+
+  local keep_key="0"
+  if [[ -f "$CONFIG_FILE" ]]; then
+    if confirm_action "是否保留当前鉴权 Key 与端口配置？" "1"; then
+      keep_key="1"
+    fi
+  fi
+
+  stop_adspower || true
+
+  if [[ -f "$SERVICE_FILE" ]]; then
+    systemctl stop adspower >/dev/null 2>&1 || true
+    systemctl disable adspower >/dev/null 2>&1 || true
+    rm -f "$SERVICE_FILE"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
+
+  local install_root
+  install_root="$(dirname "$ADSPOWER_EXEC")"
+  if [[ -d "$install_root" ]]; then
+    rm -rf "$install_root"
+    info "已移除安装目录: $install_root"
+  fi
+
+  local bin_link="${ADSPOWER_BIN_LINK_DIR}/${ADSPOWER_BIN_LINK_NAME}"
+  [[ -L "$bin_link" || -f "$bin_link" ]] && rm -f "$bin_link"
+
+  local cfg_roots=()
+  cfg_roots+=("$HOME/.config/adspower_global")
+  if [[ "$HOME" != "/root" ]]; then
+    cfg_roots+=("/root/.config/adspower_global")
+  fi
+
+  local cfg_dir
+  for cfg_dir in "${cfg_roots[@]}"; do
+    if [[ -d "$cfg_dir" ]]; then
+      rm -rf "$cfg_dir"
+      info "已清理运行目录: $cfg_dir"
+    fi
+  done
+
+  rm -f "$ACTIVE_PATCH_FILE" /tmp/adspower_mgr_start.log
+
+  if [[ "$keep_key" == "1" ]]; then
+    save_config
+    success "AdsPower 已卸载，鉴权 Key 已保留。"
+  else
+    rm -f "$CONFIG_FILE"
+    success "AdsPower 已卸载，鉴权 Key 已清理。"
+  fi
+}
+
 show_api_detail() {
   load_config
   if ! is_valid_port "$API_PORT"; then
@@ -2048,7 +2019,14 @@ show_api_detail() {
 
   local detail
   detail="$(get_api_raw_status)"
+  local auth_error=""
+  auth_error="$(detect_adspower_auth_error 2>/dev/null || true)"
   if [[ -z "$detail" ]]; then
+    if [[ -n "$auth_error" ]]; then
+      error "$auth_error"
+      warn "请更换有效 Key，或确认账号状态后重试。"
+      return 1
+    fi
     error "API 不可达: http://127.0.0.1:${API_PORT}/status"
     return 1
   fi
@@ -2073,6 +2051,7 @@ show_api_detail() {
     echo -e "端口监听 : ${RED}未监听${NC}"
   fi
   echo "状态消息 : $msg"
+  [[ -n "$auth_error" ]] && echo "授权状态 : $auth_error"
   echo "----------------------------------------"
 }
 
@@ -2127,7 +2106,7 @@ main_menu() {
     echo "8. 补丁管理菜单"
     echo "9. 内核管理菜单"
     echo -e "10. ${CYAN}OpenClaw（上游同步）${NC}"
-    echo -e "11. ${CYAN}SkillHub 技能安装${NC}"
+    echo -e "11. ${YELLOW}卸载 AdsPower 服务${NC}"
     echo -e "12. ${CYAN}OpenCode 安装与授权${NC}"
     echo "0. 退出脚本"
     echo "----------------------------------------"
@@ -2158,7 +2137,7 @@ main_menu() {
       8) patch_menu ;;
       9) kernel_menu ;;
       10) openclaw_menu ;;
-      11) skillhub_menu ;;
+      11) uninstall_adspower ;;
       12) opencode_menu ;;
       0) exit 0 ;;
       *) warn "无效选项: $choice" ;;

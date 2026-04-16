@@ -14,6 +14,7 @@
 - 补丁管理（显示当前补丁；官方 API 更新 stable/beta；本地补丁应用与失败回滚）
 - Chrome 内核下载菜单
 - OpenClaw 上游菜单融合（通过 Kejilion 最新脚本实时进入）
+- 卸载 AdsPower 服务（可选择保留或清理鉴权 Key）
 - OpenCode 安装与授权
 
 ## 内置行为
@@ -101,6 +102,7 @@ API_PORT=50325
 1. 检查 `API_KEY` 和 `API_PORT` 是否正确。
 2. 检查 `xvfb-run` 是否已安装。
 3. 查看日志 `/tmp/adspower_mgr_start.log`。
+4. 若日志包含 `ERROR - 4007` 或 `Expired, please recharge`，说明当前 Key/账号状态异常，请更换有效 Key。
 
 - systemd 无法启动：
 1. 执行 `systemctl status adspower` 查看报错。
