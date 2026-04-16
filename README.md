@@ -49,14 +49,14 @@ sudo bash ./adspower_mgr.sh
 ads
 ```
 
-- 远程一键启动（不落地文件，直接运行最新脚本）：
+- 远程一键启动（下载到当前目录后立即执行；若当前目录已存在 `adspower_mgr.sh`，会直接覆盖）：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Jane-Rui/script-management/main/adspower_mgr.sh -o ./adspower_mgr.sh && bash ./adspower_mgr.sh
 ```
 
 ## 一键执行
-适用于服务器快速拉取并启动脚本（默认从 `main` 分支获取最新版本，下载到当前目录）：
+适用于服务器快速拉取并启动脚本（默认从 `main` 分支获取最新版本，下载到当前目录；若已存在同名脚本会直接覆盖）：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Jane-Rui/script-management/main/adspower_mgr.sh -o ./adspower_mgr.sh && bash ./adspower_mgr.sh
