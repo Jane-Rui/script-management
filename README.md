@@ -23,6 +23,8 @@
 - 自动创建命令软链接：`/usr/local/bin/adspower_global`
 - 首次运行后自动创建快捷命令：`ads`
 - 安装阶段支持同步更新 `main.min.js`（可开关）
+- 默认内置补丁版本为 `v2.8.4.9`
+- 启动时默认启用 `xvfb + 软件渲染 + swiftshader` 稳定模式，降低服务器环境下 GPU 初始化导致的启动失败概率
 
 ## 运行要求
 - Linux 环境
@@ -89,6 +91,8 @@ API_PORT=50325
 - `ADSPOWER_MAIN_MIN_JS_URL`
 - `ADSPOWER_MAIN_MIN_JS_DEST`
 - `ADSPOWER_SYNC_MAIN_MIN_JS_ON_INSTALL`
+- `ADSPOWER_START_LOG`
+- `ADSPOWER_XVFB_SERVER_ARGS`
 - `OPENCODE_INSTALL_URL`
 - `OPENCODE_CONFIG_DIR`
 - `OPENCODE_CONFIG_FILE`
@@ -103,6 +107,7 @@ API_PORT=50325
 2. 检查 `xvfb-run` 是否已安装。
 3. 查看日志 `/tmp/adspower_mgr_start.log`。
 4. 若日志包含 `ERROR - 4007` 或 `Expired, please recharge`，说明当前 Key/账号状态异常，请更换有效 Key。
+5. 若日志出现 GPU/Viz 初始化错误，脚本已默认启用软件渲染稳定模式；是否真正失败以 API 是否在线为准。
 
 - systemd 无法启动：
 1. 执行 `systemctl status adspower` 查看报错。
