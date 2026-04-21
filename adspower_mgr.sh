@@ -33,9 +33,11 @@ ADSPOWER_DEB_BASE="${ADSPOWER_DEB_BASE:-https://version.adspower.net/software/li
 ADSPOWER_DEB_PATH="${ADSPOWER_DEB_PATH:-}"
 ADSPOWER_BIN_LINK_DIR="${ADSPOWER_BIN_LINK_DIR:-/usr/local/bin}"
 ADSPOWER_BIN_LINK_NAME="${ADSPOWER_BIN_LINK_NAME:-adspower_global}"
-ADSPOWER_MAIN_MIN_JS_URL="${ADSPOWER_MAIN_MIN_JS_URL:-https://version.adspower.net/software/lib_production/v2.8.4.8_main.min.js4f610309632b3871ec0a79f3c10af939}"
+ADSPOWER_MAIN_MIN_JS_URL="${ADSPOWER_MAIN_MIN_JS_URL:-https://version.adspower.net/software/lib_production/v2.8.4.9_main.min.jscfb7657db113a785a19883dc4ee83140}"
 ADSPOWER_MAIN_MIN_JS_DEST="${ADSPOWER_MAIN_MIN_JS_DEST:-${ADSPOWER_INSTALL_PREFIX}/AdsPower Global/adspower_global/cwd_global/lib/main.min.js}"
 ADSPOWER_SYNC_MAIN_MIN_JS_ON_INSTALL="${ADSPOWER_SYNC_MAIN_MIN_JS_ON_INSTALL:-1}"
+ADSPOWER_START_LOG="${ADSPOWER_START_LOG:-/tmp/adspower_mgr_start.log}"
+ADSPOWER_XVFB_SERVER_ARGS="${ADSPOWER_XVFB_SERVER_ARGS:--screen 0 1920x1080x24 -ac +extension RANDR}"
 KEJILION_BOOTSTRAP_URL="${KEJILION_BOOTSTRAP_URL:-https://kejilion.sh}"
 OPENCODE_INSTALL_URL="${OPENCODE_INSTALL_URL:-https://opencode.ai/install}"
 OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
@@ -445,7 +447,7 @@ get_latest_adspower_runtime_log() {
 }
 
 detect_adspower_auth_error() {
-  local files=("/tmp/adspower_mgr_start.log")
+  local files=("$ADSPOWER_START_LOG")
   local runtime_log=""
   runtime_log="$(get_latest_adspower_runtime_log 2>/dev/null || true)"
   [[ -n "$runtime_log" ]] && files+=("$runtime_log")
@@ -459,6 +461,30 @@ detect_adspower_auth_error() {
     fi
   done
   return 1
+}
+
+build_adspower_launch_args() {
+  printf '%s\n' \
+    "--headless=true" \
+    "--api-key=${API_KEY}" \
+    "--api-port=${API_PORT}" \
+    "--no-sandbox" \
+    "--disable-gpu" \
+    "--disable-gpu-compositing" \
+    "--disable-dev-shm-usage" \
+    "--ignore-gpu-blocklist" \
+    "--use-gl=swiftshader" \
+    "--enable-unsafe-swiftshader" \
+    "--disable-features=VizDisplayCompositor"
+}
+
+shell_escape_args() {
+  local out=""
+  local arg
+  for arg in "$@"; do
+    printf -v out '%s %q' "$out" "$arg"
+  done
+  printf '%s' "${out# }"
 }
 
 load_config() {
@@ -602,6 +628,7 @@ ensure_default_patch_list() {
 
 write_default_patch_list() {
   cat > "$PATCH_LIST" <<EOF
+v2.8.4.9|https://version.adspower.net/software/lib_production/v2.8.4.9_main.min.jscfb7657db113a785a19883dc4ee83140
 v2.8.4.8|https://version.adspower.net/software/lib_production/v2.8.4.8_main.min.js4f610309632b3871ec0a79f3c10af939
 v2.8.4.5|https://version.adspower.net/software/lib_production/v2.8.4.5_main.min.js72fe93ad5adf15026d67f1c2e4137378
 v2.8.4.4|https://version.adspower.net/software/lib_production/v2.8.4.4_main.min.js11bff97aadb92fc16a9abd79e1939518
@@ -619,6 +646,7 @@ ensure_patch_list_healthy() {
   fi
 
   local required_entries=(
+    "v2.8.4.9|https://version.adspower.net/software/lib_production/v2.8.4.9_main.min.jscfb7657db113a785a19883dc4ee83140"
     "v2.8.4.8|https://version.adspower.net/software/lib_production/v2.8.4.8_main.min.js4f610309632b3871ec0a79f3c10af939"
     "v2.8.4.5|https://version.adspower.net/software/lib_production/v2.8.4.5_main.min.js72fe93ad5adf15026d67f1c2e4137378"
     "v2.8.4.4|https://version.adspower.net/software/lib_production/v2.8.4.4_main.min.js11bff97aadb92fc16a9abd79e1939518"
@@ -667,6 +695,7 @@ wait_api_ready() {
 
 start_adspower() {
   local skip_dep_prompt="${1:-0}"
+  local launch_args=()
   load_config
   prompt_api_key_if_needed || return 1
   if ! ensure_adspower_runtime_ready; then
@@ -701,6 +730,7 @@ start_adspower() {
     fi
   fi
   ensure_bin_link || true
+  mapfile -t launch_args < <(build_adspower_launch_args)
 
   if is_adspower_running; then
     info "AdsPower 进程已在运行，检查 API 状态..."
@@ -728,7 +758,7 @@ start_adspower() {
 
   require_cmd xvfb-run || return 1
   info "正在启动 AdsPower..."
-  nohup xvfb-run -a "$ADSPOWER_EXEC" --headless=true --api-key="$API_KEY" --api-port="$API_PORT" --no-sandbox --disable-gpu >/tmp/adspower_mgr_start.log 2>&1 &
+  nohup env LIBGL_ALWAYS_SOFTWARE=1 ELECTRON_DISABLE_GPU=1 xvfb-run -a --server-args="$ADSPOWER_XVFB_SERVER_ARGS" "$ADSPOWER_EXEC" "${launch_args[@]}" >"$ADSPOWER_START_LOG" 2>&1 &
 
   if wait_api_ready 20; then
     success "AdsPower 启动成功，API 在线: 127.0.0.1:$API_PORT"
@@ -740,12 +770,13 @@ start_adspower() {
   if [[ -n "$auth_error" ]]; then
     error "$auth_error"
     warn "请更换有效 Key，或确认 AdsPower 账号状态正常后重试。"
-    tail -n 20 /tmp/adspower_mgr_start.log 2>/dev/null || true
+    tail -n 20 "$ADSPOWER_START_LOG" 2>/dev/null || true
     return 1
   fi
 
-  error "启动超时，API 未就绪。日志: /tmp/adspower_mgr_start.log"
-  tail -n 20 /tmp/adspower_mgr_start.log 2>/dev/null || true
+  warn "在无桌面服务器上，偶发 GPU/Viz 初始化日志通常不影响启动；脚本已切换到软件渲染稳定模式。"
+  error "启动超时，API 未就绪。日志: $ADSPOWER_START_LOG"
+  tail -n 20 "$ADSPOWER_START_LOG" 2>/dev/null || true
   return 1
 }
 
@@ -777,10 +808,17 @@ restart_adspower() {
 write_systemd_service() {
   local esc_exec="$ADSPOWER_EXEC"
   local esc_key="$API_KEY"
+  local esc_xvfb="$ADSPOWER_XVFB_SERVER_ARGS"
+  local launch_args=()
+  local launch_args_escaped=""
   esc_exec="${esc_exec//\\/\\\\}"
   esc_exec="${esc_exec//\"/\\\"}"
   esc_key="${esc_key//\\/\\\\}"
   esc_key="${esc_key//\"/\\\"}"
+  esc_xvfb="${esc_xvfb//\\/\\\\}"
+  esc_xvfb="${esc_xvfb//\"/\\\"}"
+  mapfile -t launch_args < <(build_adspower_launch_args)
+  launch_args_escaped="$(shell_escape_args "${launch_args[@]}")"
 
   cat > "$SERVICE_FILE" <<EOF
 [Unit]
@@ -793,7 +831,9 @@ User=root
 Environment="DISPLAY=:99"
 Environment="API_KEY=${esc_key}"
 Environment="API_PORT=${API_PORT}"
-ExecStart=/usr/bin/xvfb-run -a "${esc_exec}" --headless=true --api-key=\${API_KEY} --api-port=\${API_PORT} --no-sandbox --disable-gpu
+Environment="LIBGL_ALWAYS_SOFTWARE=1"
+Environment="ELECTRON_DISABLE_GPU=1"
+ExecStart=/usr/bin/xvfb-run -a --server-args="${esc_xvfb}" "${esc_exec}" ${launch_args_escaped}
 Restart=always
 RestartSec=2
 
@@ -1999,7 +2039,7 @@ uninstall_adspower() {
     fi
   done
 
-  rm -f "$ACTIVE_PATCH_FILE" /tmp/adspower_mgr_start.log
+  rm -f "$ACTIVE_PATCH_FILE" "$ADSPOWER_START_LOG"
 
   if [[ "$keep_key" == "1" ]]; then
     save_config
